@@ -1,12 +1,14 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect } from "react";
+import { useNavigate } from 'react-router-dom';
 
 export default function Home() {
+    const navigate = useNavigate();
   const [currentImage, setCurrentImage] = useState(0);
   const images = [
-    { src: '/court-1.jpg', alt: 'Professional Pickleball Court' },
-    { src: '/court-2.jpg', alt: 'Indoor Climate Control' },
-    { src: '/court-3.jpg', alt: 'Tournament Ready Facility' },
-    { src: '/court-4.jpg', alt: 'Premium Equipment' }
+    { src: "/court-1.jpg", alt: "Professional Pickleball Court" },
+    { src: "/court-2.jpg", alt: "Indoor Climate Control" },
+    { src: "/court-3.jpg", alt: "Tournament Ready Facility" },
+    { src: "/court-4.jpg", alt: "Premium Equipment" },
   ];
 
   // Auto-scroll images every 12 seconds
@@ -29,7 +31,10 @@ export default function Home() {
                 PicklePlay
               </span>
             </div>
-            <button className="bg-blue-900 text-white px-8 py-3 rounded-full font-semibold hover:bg-blue-800 transition-all shadow-lg hover:shadow-xl">
+            <button
+              onClick={() => navigate("/booking")}
+              className="bg-blue-900 text-white px-8 py-3 rounded-full font-semibold hover:bg-blue-800 transition-all shadow-lg hover:shadow-xl"
+            >
               Book Now →
             </button>
           </div>
@@ -44,7 +49,7 @@ export default function Home() {
             <div
               key={index}
               className={`absolute inset-0 transition-opacity duration-1000 ${
-                index === currentImage ? 'opacity-100' : 'opacity-0'
+                index === currentImage ? "opacity-100" : "opacity-0"
               }`}
             >
               <img
@@ -62,17 +67,21 @@ export default function Home() {
           <div className="container mx-auto px-6">
             <div className="max-w-3xl">
               <h1 className="text-6xl md:text-7xl font-bold text-white mb-6 leading-tight">
-                Elevate Your<br />
+                Elevate Your
+                <br />
                 <span className="bg-gradient-to-r from-blue-200 to-white bg-clip-text text-transparent">
                   Pickleball Game
                 </span>
               </h1>
               <p className="text-xl text-blue-100 mb-8 leading-relaxed">
-                Premium indoor court with real-time booking. No more calls, no more waiting. 
-                Book your perfect slot in seconds.
+                Premium indoor court with real-time booking. No more calls, no
+                more waiting. Book your perfect slot in seconds.
               </p>
               <div className="flex space-x-4">
-                <button className="bg-white text-blue-900 px-8 py-4 rounded-full font-bold text-lg hover:bg-blue-50 transition-all shadow-xl hover:shadow-2xl hover:scale-105">
+                <button
+                  onClick={() => navigate("/booking")}
+                  className="bg-white text-blue-900 px-8 py-4 rounded-full font-bold text-lg hover:bg-blue-50 transition-all shadow-xl hover:shadow-2xl hover:scale-105"
+                >
                   View Available Slots
                 </button>
                 <button className="border-2 border-white text-white px-8 py-4 rounded-full font-bold text-lg hover:bg-white/10 transition-all">
@@ -90,9 +99,9 @@ export default function Home() {
               key={index}
               onClick={() => setCurrentImage(index)}
               className={`w-3 h-3 rounded-full transition-all ${
-                index === currentImage 
-                  ? 'bg-white w-8' 
-                  : 'bg-white/50 hover:bg-white/75'
+                index === currentImage
+                  ? "bg-white w-8"
+                  : "bg-white/50 hover:bg-white/75"
               }`}
             />
           ))}
@@ -127,7 +136,8 @@ export default function Home() {
               Why Players Choose Us
             </h2>
             <p className="text-xl text-gray-600 max-w-2xl mx-auto">
-              Experience the perfect blend of convenience, quality, and professional service
+              Experience the perfect blend of convenience, quality, and
+              professional service
             </p>
           </div>
 
@@ -135,36 +145,48 @@ export default function Home() {
             {/* Feature 1 */}
             <div className="group bg-white p-8 rounded-2xl shadow-lg hover:shadow-2xl transition-all hover:-translate-y-2">
               <div className="bg-blue-100 w-16 h-16 rounded-2xl flex items-center justify-center mb-6 group-hover:bg-blue-900 transition-colors">
-                <span className="text-3xl group-hover:scale-110 transition-transform">🏓</span>
+                <span className="text-3xl group-hover:scale-110 transition-transform">
+                  🏓
+                </span>
               </div>
-              <h3 className="text-2xl font-bold text-blue-900 mb-3">Premium Facility</h3>
+              <h3 className="text-2xl font-bold text-blue-900 mb-3">
+                Premium Facility
+              </h3>
               <p className="text-gray-600 leading-relaxed">
-                Climate-controlled indoor court with professional-grade surface and lighting. 
-                Perfect conditions, every single time.
+                Climate-controlled indoor court with professional-grade surface
+                and lighting. Perfect conditions, every single time.
               </p>
             </div>
 
             {/* Feature 2 */}
             <div className="group bg-white p-8 rounded-2xl shadow-lg hover:shadow-2xl transition-all hover:-translate-y-2">
               <div className="bg-blue-100 w-16 h-16 rounded-2xl flex items-center justify-center mb-6 group-hover:bg-blue-900 transition-colors">
-                <span className="text-3xl group-hover:scale-110 transition-transform">⚡</span>
+                <span className="text-3xl group-hover:scale-110 transition-transform">
+                  ⚡
+                </span>
               </div>
-              <h3 className="text-2xl font-bold text-blue-900 mb-3">Instant Booking</h3>
+              <h3 className="text-2xl font-bold text-blue-900 mb-3">
+                Instant Booking
+              </h3>
               <p className="text-gray-600 leading-relaxed">
-                Real-time slot availability at your fingertips. No phone calls needed. 
-                Book in 30 seconds, play in minutes.
+                Real-time slot availability at your fingertips. No phone calls
+                needed. Book in 30 seconds, play in minutes.
               </p>
             </div>
 
             {/* Feature 3 */}
             <div className="group bg-white p-8 rounded-2xl shadow-lg hover:shadow-2xl transition-all hover:-translate-y-2">
               <div className="bg-blue-100 w-16 h-16 rounded-2xl flex items-center justify-center mb-6 group-hover:bg-blue-900 transition-colors">
-                <span className="text-3xl group-hover:scale-110 transition-transform">💳</span>
+                <span className="text-3xl group-hover:scale-110 transition-transform">
+                  💳
+                </span>
               </div>
-              <h3 className="text-2xl font-bold text-blue-900 mb-3">Flexible Payment</h3>
+              <h3 className="text-2xl font-bold text-blue-900 mb-3">
+                Flexible Payment
+              </h3>
               <p className="text-gray-600 leading-relaxed">
-                Pay online via UPI for instant confirmation, or choose to pay at the court. 
-                Your choice, your convenience.
+                Pay online via UPI for instant confirmation, or choose to pay at
+                the court. Your choice, your convenience.
               </p>
             </div>
           </div>
@@ -180,8 +202,12 @@ export default function Home() {
               <span className="text-2xl font-bold">PicklePlay</span>
             </div>
             <div className="text-blue-300 text-center md:text-right">
-              <p className="mb-1">© {new Date().getFullYear()} PicklePlay Court Booking</p>
-              <p className="text-sm text-blue-400">Built with Love by Darren ❤️</p>
+              <p className="mb-1">
+                © {new Date().getFullYear()} PicklePlay Court Booking
+              </p>
+              <p className="text-sm text-blue-400">
+                Built with Love by Darren ❤️
+              </p>
             </div>
           </div>
         </div>
