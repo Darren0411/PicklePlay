@@ -1,5 +1,6 @@
 import React, { useState, useRef, useEffect } from 'react';
 import Calendar from '../components/Calendar';
+import { getSlotsForDate } from '../utils/firestoreHelper';
 
 export default function Booking() {
   const [selectedDate, setSelectedDate] = useState(new Date());
@@ -7,19 +8,20 @@ export default function Booking() {
   const [showDatePicker, setShowDatePicker] = useState(false);
   const dateScrollRef = useRef(null);
   const dateRefs = useRef({});
+  const [timeSlots, setTimeSlots] = useState([]);
+  const [loading, setLoading] = useState(false);
 
   // Generate dates for current and next month only
   const generateAvailableDates = () => {
     const today = new Date();
     today.setHours(0, 0, 0, 0);
     
-    const dates = [];
+    const endDate = new Date(today.getFullYear(), today.getMonth() + 2, 0);
     
-    // Calculate how many months until January 2026
-    const targetDate = new Date(2026, 0, 31); // January 31, 2026
+    const dates = [];
     const currentDate = new Date(today);
     
-    while (currentDate <= targetDate) {
+    while (currentDate <= endDate) {
       dates.push(new Date(currentDate));
       currentDate.setDate(currentDate.getDate() + 1);
     }
@@ -27,22 +29,40 @@ export default function Booking() {
     return dates;
   };
 
-  // Generate time slots from 8 AM to 9 PM
-  const generateTimeSlots = () => {
-    const slots = [];
-    for (let hour = 8; hour < 21; hour++) {
-      const startTime = `${hour.toString().padStart(2, '0')}:00`;
-      const endTime = `${(hour + 1).toString().padStart(2, '0')}:00`;
-      slots.push({
-        id: `${hour}`,
-        startTime,
-        endTime,
-        displayTime: `${formatTime(hour)} - ${formatTime(hour + 1)}`,
-        price: 200,
-        available: Math.random() > 0.3 // Simulating availability (70% available)
-      });
+  // Fetch slots from Firestore when date changes
+  useEffect(() => {
+    loadSlotsForDate(selectedDate);
+  }, [selectedDate]);
+
+  const loadSlotsForDate = async (date) => {
+    setLoading(true);
+    setSelectedSlots([]); // Clear selected slots when date changes
+    
+    const result = await getSlotsForDate(date);
+    
+    if (result.success) {
+      // Transform Firestore data to match UI format
+      const formattedSlots = result.slots.map(slot => ({
+        id: slot.id,
+        startTime: slot.startTime,
+        endTime: slot.endTime,
+        displayTime: `${formatTime(slot.hour)} - ${formatTime(slot.hour + 1)}`,
+        price: slot.price,
+        available: slot.status === 'available',
+        hour: slot.hour,
+        bookingId: slot.bookingId
+      }));
+      
+      // Sort by hour (8 AM to 9 PM)
+      formattedSlots.sort((a, b) => a.hour - b.hour);
+      
+      setTimeSlots(formattedSlots);
+    } else {
+      console.error('Error loading slots:', result.error);
+      setTimeSlots([]);
     }
-    return slots;
+    
+    setLoading(false);
   };
 
   const formatTime = (hour) => {
@@ -51,7 +71,6 @@ export default function Booking() {
     return `${hour}:00`;
   };
 
-  const timeSlots = generateTimeSlots();
   const availableDates = generateAvailableDates();
 
   const toggleSlotSelection = (slot) => {
@@ -68,7 +87,6 @@ export default function Booking() {
     setSelectedDate(date);
     setShowDatePicker(false);
     
-    // Scroll to selected date after a short delay
     setTimeout(() => {
       scrollToDate(date);
     }, 100);
@@ -84,7 +102,6 @@ export default function Booking() {
       const containerWidth = container.offsetWidth;
       const elementWidth = element.offsetWidth;
       
-      // Scroll to center the selected date
       container.scrollTo({
         left: elementLeft - (containerWidth / 2) + (elementWidth / 2),
         behavior: 'smooth'
@@ -112,7 +129,7 @@ export default function Booking() {
       </div>
 
       {/* Date Selector - Horizontal Scroll */}
-<div className="bg-white border-b sticky top-[56px] z-30">
+      <div className="bg-white border-b sticky top-[56px] z-30">
         <div className="container mx-auto px-4 py-3">
           <div className="flex items-center justify-between mb-2">
             <button 
@@ -179,64 +196,89 @@ export default function Booking() {
         </div>
       </div>
 
-      {/* Time Slots Grid */}
-      <div className="container mx-auto px-4">
-        <div className="space-y-2">
-          {timeSlots.map((slot) => {
-            const isSelected = selectedSlots.find(s => s.id === slot.id);
-            
-            return (
-              <button
-                key={slot.id}
-                onClick={() => toggleSlotSelection(slot)}
-                disabled={!slot.available}
-                className={`w-full flex items-center justify-between p-3 rounded-lg transition-all ${
-                  !slot.available
-                    ? 'bg-gray-100 border-2 border-gray-300 cursor-not-allowed opacity-60'
-                    : isSelected
-                    ? 'bg-green-50 border-2 border-green-600'
-                    : 'bg-white border-2 border-gray-200 hover:border-green-400'
-                }`}
-              >
-                <div className="flex items-center">
-                  <div className="text-left">
-                    <div className="text-base font-semibold text-gray-800">
-                      {slot.displayTime}
-                    </div>
-                    <div className="text-xs text-gray-500">
-                      1 hour slot
-                    </div>
-                  </div>
-                </div>
-
-                <div className="flex items-center gap-3">
-                  <div className="text-right">
-                    <div className="text-base font-bold text-gray-800">
-                      ₹{slot.price}
-                    </div>
-                  </div>
-                  
-                  {slot.available ? (
-                    <div className={`w-7 h-7 rounded-full flex items-center justify-center border-2 ${
-                      isSelected
-                        ? 'bg-green-600 border-green-600'
-                        : 'border-gray-300'
-                    }`}>
-                      {isSelected && (
-                        <span className="text-white text-lg">✓</span>
-                      )}
-                    </div>
-                  ) : (
-                    <div className="w-7 h-7 rounded-full flex items-center justify-center bg-red-100 border-2 border-red-400">
-                      <span className="text-red-600 text-base">✕</span>
-                    </div>
-                  )}
-                </div>
-              </button>
-            );
-          })}
+      {/* Loading State */}
+      {loading && (
+        <div className="container mx-auto px-4 py-8">
+          <div className="flex items-center justify-center">
+            <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-green-600"></div>
+            <span className="ml-3 text-gray-600">Loading slots...</span>
+          </div>
         </div>
-      </div>
+      )}
+
+      {/* No Slots Available */}
+      {!loading && timeSlots.length === 0 && (
+        <div className="container mx-auto px-4 py-8">
+          <div className="bg-yellow-50 border-2 border-yellow-200 rounded-lg p-6 text-center">
+            <span className="text-4xl mb-2 block">📅</span>
+            <h3 className="text-lg font-bold text-gray-800 mb-2">No Slots Available</h3>
+            <p className="text-sm text-gray-600">
+              Slots for this date haven't been created yet. Please try another date.
+            </p>
+          </div>
+        </div>
+      )}
+
+      {/* Time Slots Grid */}
+      {!loading && timeSlots.length > 0 && (
+        <div className="container mx-auto px-4">
+          <div className="space-y-2">
+            {timeSlots.map((slot) => {
+              const isSelected = selectedSlots.find(s => s.id === slot.id);
+              
+              return (
+                <button
+                  key={slot.id}
+                  onClick={() => toggleSlotSelection(slot)}
+                  disabled={!slot.available}
+                  className={`w-full flex items-center justify-between p-3 rounded-lg transition-all ${
+                    !slot.available
+                      ? 'bg-gray-100 border-2 border-gray-300 cursor-not-allowed opacity-60'
+                      : isSelected
+                      ? 'bg-green-50 border-2 border-green-600'
+                      : 'bg-white border-2 border-gray-200 hover:border-green-400'
+                  }`}
+                >
+                  <div className="flex items-center">
+                    <div className="text-left">
+                      <div className="text-base font-semibold text-gray-800">
+                        {slot.displayTime}
+                      </div>
+                      <div className="text-xs text-gray-500">
+                        1 hour slot
+                      </div>
+                    </div>
+                  </div>
+
+                  <div className="flex items-center gap-3">
+                    <div className="text-right">
+                      <div className="text-base font-bold text-gray-800">
+                        ₹{slot.price}
+                      </div>
+                    </div>
+                    
+                    {slot.available ? (
+                      <div className={`w-7 h-7 rounded-full flex items-center justify-center border-2 ${
+                        isSelected
+                          ? 'bg-green-600 border-green-600'
+                          : 'border-gray-300'
+                      }`}>
+                        {isSelected && (
+                          <span className="text-white text-lg">✓</span>
+                        )}
+                      </div>
+                    ) : (
+                      <div className="w-7 h-7 rounded-full flex items-center justify-center bg-red-100 border-2 border-red-400">
+                        <span className="text-red-600 text-base">✕</span>
+                      </div>
+                    )}
+                  </div>
+                </button>
+              );
+            })}
+          </div>
+        </div>
+      )}
 
       {/* Bottom Fixed Bar - Proceed Button */}
       {selectedSlots.length > 0 && (
@@ -249,6 +291,7 @@ export default function Booking() {
                 </div>
                 <div className="text-xl font-bold text-gray-800">
                   ₹{totalPrice.toLocaleString()}
+                  <span className="text-xs text-gray-500 ml-1">+ taxes</span>
                 </div>
               </div>
               <button className="bg-orange-600 text-white px-6 py-3 rounded-lg font-bold text-sm hover:bg-orange-700 transition-all shadow-lg">
