@@ -1,5 +1,7 @@
 import React, { useState, useRef, useEffect } from 'react';
 import Calendar from '../components/Calendar';
+import CustomerDetailsModal from '../components/CustomerDetailsModal';
+import PaymentModal from '../components/PaymentModal';
 import { getSlotsForDate } from '../utils/firestoreHelper';
 
 export default function Booking() {
@@ -10,6 +12,11 @@ export default function Booking() {
   const dateRefs = useRef({});
   const [timeSlots, setTimeSlots] = useState([]);
   const [loading, setLoading] = useState(false);
+  
+  // Modal states
+  const [showCustomerModal, setShowCustomerModal] = useState(false);
+  const [showPaymentModal, setShowPaymentModal] = useState(false);
+  const [customerData, setCustomerData] = useState(null);
 
   // Generate dates for current and next month only
   const generateAvailableDates = () => {
@@ -107,6 +114,33 @@ export default function Booking() {
         behavior: 'smooth'
       });
     }
+  };
+
+  // Handle proceed click
+  const handleProceedClick = () => {
+    setShowCustomerModal(true);
+  };
+
+  // Handle OTP verification success
+  const handleCustomerDetailsSuccess = (data) => {
+    setCustomerData(data);
+    setShowCustomerModal(false);
+    setShowPaymentModal(true);
+  };
+
+  // Handle payment success
+  const handlePaymentSuccess = (paymentData) => {
+    console.log('Payment successful:', paymentData);
+    setShowPaymentModal(false);
+    
+    // TODO: Save booking to Firestore
+    // Show success message
+    alert(`🎉 Booking Confirmed!\n\nTransaction ID: ${paymentData.transactionId}\nAmount Paid: ₹${paymentData.amount}\n\nThank you, ${customerData.name}!`);
+    
+    // Reset state
+    setSelectedSlots([]);
+    setCustomerData(null);
+    loadSlotsForDate(selectedDate); // Reload slots
   };
 
   const totalPrice = selectedSlots.reduce((sum, slot) => sum + slot.price, 0);
@@ -294,12 +328,36 @@ export default function Booking() {
                   <span className="text-xs text-gray-500 ml-1">+ taxes</span>
                 </div>
               </div>
-              <button className="bg-orange-600 text-white px-6 py-3 rounded-lg font-bold text-sm hover:bg-orange-700 transition-all shadow-lg">
+              <button 
+                onClick={handleProceedClick}
+                className="bg-orange-600 text-white px-6 py-3 rounded-lg font-bold text-sm hover:bg-orange-700 transition-all shadow-lg"
+              >
                 PROCEED →
               </button>
             </div>
           </div>
         </div>
+      )}
+
+      {/* Customer Details Modal */}
+      {showCustomerModal && (
+        <CustomerDetailsModal
+          selectedSlots={selectedSlots}
+          totalPrice={totalPrice}
+          onClose={() => setShowCustomerModal(false)}
+          onSuccess={handleCustomerDetailsSuccess}
+        />
+      )}
+
+      {/* Payment Modal */}
+      {showPaymentModal && customerData && (
+        <PaymentModal
+          customerData={customerData}
+          selectedSlots={selectedSlots}
+          totalPrice={totalPrice}
+          onClose={() => setShowPaymentModal(false)}
+          onPaymentSuccess={handlePaymentSuccess}
+        />
       )}
 
       {/* Date Picker Modal */}
