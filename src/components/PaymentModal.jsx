@@ -39,11 +39,6 @@ export default function PaymentModal({ customerData, selectedSlots, totalPrice, 
 
       console.log('📅 Booking date:', bookingDateStr);
       console.log('📅 Formatted date:', formattedDate);
-      
-      // Add this right before creating bookingData:
-console.log('🔍 Selected slots:', selectedSlots);
-console.log('🔍 First slot:', selectedSlots[0]);
-console.log('🔍 Slot properties:', Object.keys(selectedSlots[0]));
 
       // Create booking object
       const bookingData = {
