@@ -1,122 +1,81 @@
 import { useState } from 'react';
-import { auth } from '../firebase';
-import { RecaptchaVerifier, signInWithPhoneNumber } from 'firebase/auth';
+import { auth, db } from '../firebase';
+import { GoogleAuthProvider, signInWithPopup } from 'firebase/auth';
+import { doc, getDoc, setDoc } from 'firebase/firestore';
 
 export default function CustomerDetailsModal({ selectedSlots, totalPrice, onClose, onSuccess }) {
-  const [step, setStep] = useState(1); // 1 = details, 2 = OTP
-  const [name, setName] = useState('');
-  const [phone, setPhone] = useState('');
-  const [otp, setOtp] = useState('');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
-  const [confirmationResult, setConfirmationResult] = useState(null);
 
-  // Initialize reCAPTCHA
-  const setupRecaptcha = () => {
-    if (!window.recaptchaVerifier) {
-      window.recaptchaVerifier = new RecaptchaVerifier(auth, 'recaptcha-container', {
-        size: 'invisible',
-        callback: (response) => {
-          console.log('reCAPTCHA solved');
-        }
+  // Google Sign-In Handler
+  const handleGoogleSignIn = async () => {
+    setLoading(true);
+    setError('');
+
+    try {
+      const provider = new GoogleAuthProvider();
+      const result = await signInWithPopup(auth, provider);
+      const user = result.user;
+
+      console.log('✅ Google Sign-In successful:', user.displayName);
+
+      // Check if user exists in Firestore
+      const userId = user.uid;
+      const userRef = doc(db, 'users', userId);
+      const userSnap = await getDoc(userRef);
+
+      let userData;
+      let isNewUser = false;
+
+      if (!userSnap.exists()) {
+        // New user - save to Firestore
+        isNewUser = true;
+        userData = {
+          uid: userId,
+          name: user.displayName,
+          email: user.email,
+          photoURL: user.photoURL,
+          createdAt: new Date().toISOString(),
+          totalBookings: 0
+        };
+        
+        await setDoc(userRef, userData);
+        console.log('🎉 New user created in Firestore!');
+      } else {
+        // Existing user
+        userData = userSnap.data();
+        console.log('👋 Welcome back:', userData.name);
+      }
+
+      setLoading(false);
+      
+      // Pass user data to parent component
+      onSuccess({
+        uid: userId,
+        name: userData.name,
+        email: userData.email,
+        photoURL: userData.photoURL || user.photoURL,
+        isNewUser
       });
-    }
-  };
-
-  // Send OTP
-  const handleSendOTP = async (e) => {
-    e.preventDefault();
-    
-    if (!name.trim()) {
-      setError('Please enter your name');
-      return;
-    }
-
-    if (!phone.match(/^[6-9]\d{9}$/)) {
-      setError('Please enter a valid 10-digit mobile number');
-      return;
-    }
-
-    setLoading(true);
-    setError('');
-
-    try {
-      setupRecaptcha();
-      const phoneNumber = `+91${phone}`;
-      console.log('📱 Attempting to send OTP to:', phoneNumber);
-      
-      const appVerifier = window.recaptchaVerifier;
-      
-      const confirmation = await signInWithPhoneNumber(auth, phoneNumber, appVerifier);
-      console.log('✅ OTP sent successfully!', confirmation);
-      
-      setConfirmationResult(confirmation);
-      setStep(2);
-      setLoading(false);
     } catch (err) {
-      console.error('❌ Full error:', err);
+      console.error('❌ Google Sign-In error:', err);
       
-      let userFriendlyMessage = 'Failed to send OTP. Please try again.';
+      let errorMessage = 'Failed to sign in with Google. Please try again.';
       
-      // Handle specific error codes
-      if (err.code === 'auth/quota-exceeded') {
-        userFriendlyMessage = '⚠️ SMS quota exceeded. Please use test number: 9999999999 (OTP: 123456)';
-      } else if (err.code === 'auth/too-many-requests') {
-        userFriendlyMessage = '⚠️ Too many requests. Please try again in 5 minutes or use test number: 9999999999';
-      } else if (err.code === 'auth/invalid-phone-number') {
-        userFriendlyMessage = '❌ Invalid phone number format. Use 10 digits starting with 6-9.';
-      } else if (err.message.includes('quota')) {
-        userFriendlyMessage = '⚠️ SMS limit reached. For testing, use: 9999999999 (OTP: 123456)';
+      if (err.code === 'auth/popup-closed-by-user') {
+        errorMessage = 'Sign-in cancelled. Please try again.';
+      } else if (err.code === 'auth/popup-blocked') {
+        errorMessage = 'Pop-up blocked! Please allow pop-ups and try again.';
       }
       
-      setError(userFriendlyMessage);
+      setError(errorMessage);
       setLoading(false);
-      
-      if (window.recaptchaVerifier) {
-        window.recaptchaVerifier.clear();
-        window.recaptchaVerifier = null;
-      }
-    }
-  };
-
-  // Verify OTP
-  const handleVerifyOTP = async (e) => {
-    e.preventDefault();
-
-    if (otp.length !== 6) {
-      setError('Please enter a valid 6-digit OTP');
-      return;
-    }
-
-    setLoading(true);
-    setError('');
-
-    try {
-      await confirmationResult.confirm(otp);
-      setLoading(false);
-      onSuccess({ name, phone: `+91${phone}` });
-    } catch (err) {
-      console.error('Error verifying OTP:', err);
-      setError('Invalid OTP. Please try again.');
-      setLoading(false);
-    }
-  };
-
-  // Resend OTP
-  const handleResendOTP = async () => {
-    setOtp('');
-    setError('');
-    setStep(1);
-    
-    if (window.recaptchaVerifier) {
-      window.recaptchaVerifier.clear();
-      window.recaptchaVerifier = null;
     }
   };
 
   return (
     <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-50 p-4">
-      <div className="bg-white rounded-2xl max-w-md w-full shadow-2xl relative max-h-[90vh] overflow-y-auto animate-[slideUp_0.3s_ease-out]">
+      <div className="bg-white rounded-2xl max-w-md w-full shadow-2xl relative animate-[slideUp_0.3s_ease-out]">
         {/* Close Button */}
         <button
           onClick={onClose}
@@ -126,226 +85,88 @@ export default function CustomerDetailsModal({ selectedSlots, totalPrice, onClos
         </button>
 
         {/* Header */}
-        <div className="bg-gradient-to-r from-blue-900 to-blue-700 text-white p-6 rounded-t-2xl">
+        <div className="bg-gradient-to-r from-green-600 to-green-500 text-white p-6 rounded-t-2xl">
           <div className="flex items-center space-x-3">
-            <div className="text-3xl">
-              {step === 1 ? '📝' : '🔐'}
-            </div>
+            <div className="text-3xl">🔐</div>
             <div>
-              <h2 className="text-2xl font-bold">
-                {step === 1 ? 'Enter Your Details' : 'Verify OTP'}
-              </h2>
-              <p className="text-blue-100 text-sm mt-1">
-                {step === 1 ? 'We need your details to confirm booking' : 'Enter the OTP sent to your phone'}
-              </p>
+              <h2 className="text-2xl font-bold">Sign In to Continue</h2>
+              <p className="text-green-100 text-sm mt-1">Secure your booking with Google</p>
             </div>
           </div>
         </div>
 
         {/* Booking Summary */}
-        <div className="bg-gradient-to-r from-blue-50 to-blue-100 p-4 border-b border-blue-200">
+        <div className="bg-gradient-to-r from-green-50 to-emerald-50 p-4 border-b border-green-200">
           <div className="flex justify-between items-center">
             <div className="flex items-center space-x-2">
-              <span className="text-2xl">🏓</span>
-              <span className="text-sm text-blue-800 font-medium">
+              <span className="text-2xl">🎾</span>
+              <span className="text-sm text-green-800 font-medium">
                 {selectedSlots.length} Slot{selectedSlots.length > 1 ? 's' : ''} Selected
               </span>
             </div>
-            <span className="font-bold text-blue-900 text-lg">₹{totalPrice}</span>
+            <span className="font-bold text-green-900 text-lg">₹{totalPrice}</span>
           </div>
         </div>
 
-        {/* Form */}
+        {/* Content */}
         <div className="p-6">
-          {step === 1 ? (
-            // Step 1: Customer Details
-            <form onSubmit={handleSendOTP} className="space-y-4">
-              {/* Test Number Helper */}
-              <div className="bg-gradient-to-r from-blue-50 to-indigo-50 border-2 border-blue-200 rounded-xl p-4">
-                <div className="flex items-start space-x-3">
-                  <span className="text-2xl">🧪</span>
-                  <div>
-                    <h4 className="font-bold text-blue-900 mb-1 text-sm">Demo Mode - Use Test Number</h4>
-                    <div className="text-xs text-blue-800 space-y-1">
-                      <div className="flex items-center gap-2">
-                        <span>Phone:</span>
-                        <code className="bg-blue-200 px-2 py-1 rounded font-mono font-semibold">9999999999</code>
-                      </div>
-                      <div className="flex items-center gap-2">
-                        <span>OTP:</span>
-                        <code className="bg-blue-200 px-2 py-1 rounded font-mono font-semibold">123456</code>
-                      </div>
-                    </div>
-                  </div>
-                </div>
+          {/* Info Box */}
+          <div className="bg-blue-50 border-2 border-blue-200 rounded-lg p-4 mb-6">
+            <div className="flex items-start space-x-3">
+              <span className="text-2xl">ℹ️</span>
+              <div className="text-sm text-blue-800">
+                <p className="font-semibold mb-1">Why sign in?</p>
+                <ul className="space-y-1 text-xs">
+                  <li>✅ Secure your booking</li>
+                  <li>✅ Receive email confirmation</li>
+                  <li>✅ Track your bookings</li>
+                  <li>✅ Quick checkout next time</li>
+                </ul>
               </div>
+            </div>
+          </div>
 
-              {/* Name Input */}
-              <div>
-                <label className="block text-sm font-semibold text-gray-700 mb-2">
-                  Full Name *
-                </label>
-                <input
-                  type="text"
-                  value={name}
-                  onChange={(e) => setName(e.target.value)}
-                  placeholder="Enter your full name"
-                  className="w-full px-4 py-3 border-2 border-gray-300 rounded-lg focus:border-blue-600 focus:ring-2 focus:ring-blue-200 focus:outline-none transition-all"
-                  required
-                />
-              </div>
+          {/* Google Sign-In Button */}
+          <button
+            onClick={handleGoogleSignIn}
+            disabled={loading}
+            className="w-full flex items-center justify-center gap-3 bg-white border-2 border-gray-300 hover:border-green-500 hover:bg-green-50 rounded-lg py-4 px-4 font-semibold text-gray-700 transition-all shadow-md hover:shadow-lg disabled:opacity-50 disabled:cursor-not-allowed"
+          >
+            {loading ? (
+              <>
+                <span className="animate-spin text-xl">⏳</span>
+                <span>Signing in...</span>
+              </>
+            ) : (
+              <>
+                <svg className="w-6 h-6" viewBox="0 0 24 24">
+                  <path fill="#4285F4" d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z"/>
+                  <path fill="#34A853" d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z"/>
+                  <path fill="#FBBC05" d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.07H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.93l2.85-2.22.81-.62z"/>
+                  <path fill="#EA4335" d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.07l3.66 2.84c.87-2.6 3.3-4.53 6.16-4.53z"/>
+                </svg>
+                <span>Continue with Google</span>
+              </>
+            )}
+          </button>
 
-              {/* Phone Input */}
-              <div>
-                <label className="block text-sm font-semibold text-gray-700 mb-2">
-                  Mobile Number *
-                </label>
-                <div className="flex">
-                  <span className="inline-flex items-center px-4 py-3 bg-gray-100 border-2 border-r-0 border-gray-300 rounded-l-lg text-gray-600 font-semibold">
-                    +91
-                  </span>
-                  <input
-                    type="tel"
-                    value={phone}
-                    onChange={(e) => setPhone(e.target.value.replace(/\D/g, '').slice(0, 10))}
-                    placeholder="9999999999"
-                    maxLength="10"
-                    className="flex-1 px-4 py-3 border-2 border-gray-300 rounded-r-lg focus:border-blue-600 focus:ring-2 focus:ring-blue-200 focus:outline-none transition-all"
-                    required
-                  />
-                </div>
-                <p className="text-xs text-gray-500 mt-1 flex items-center">
-                  <span className="mr-1">📱</span>
-                  You'll receive an OTP for verification
-                </p>
-              </div>
-
-              {/* Error Message */}
-              {error && (
-                <div className="bg-red-50 border-2 border-red-200 rounded-lg p-3 animate-[shake_0.3s_ease-in-out]">
-                  <p className="text-sm text-red-600 flex items-center">
-                    <span className="mr-2">⚠️</span>
-                    {error}
-                  </p>
-                </div>
-              )}
-
-              {/* Submit Button */}
-              <button
-                type="submit"
-                disabled={loading}
-                className={`w-full py-3 rounded-lg font-bold text-white transition-all transform ${
-                  loading
-                    ? 'bg-gray-400 cursor-not-allowed'
-                    : 'bg-gradient-to-r from-blue-900 to-blue-700 hover:from-blue-800 hover:to-blue-600 shadow-lg hover:shadow-xl hover:scale-105'
-                }`}
-              >
-                {loading ? (
-                  <span className="flex items-center justify-center">
-                    <span className="animate-spin mr-2">⏳</span>
-                    Sending OTP...
-                  </span>
-                ) : (
-                  <span className="flex items-center justify-center">
-                    Send OTP
-                    <span className="ml-2">→</span>
-                  </span>
-                )}
-              </button>
-
-              {/* reCAPTCHA container */}
-              <div id="recaptcha-container"></div>
-            </form>
-          ) : (
-            // Step 2: OTP Verification
-            <form onSubmit={handleVerifyOTP} className="space-y-4">
-              {/* OTP Display Info */}
-              <div className="bg-gradient-to-r from-blue-50 to-indigo-50 border-2 border-blue-200 rounded-lg p-4">
-                <p className="text-sm text-blue-800 flex items-center">
-                  <span className="text-2xl mr-2">📱</span>
-                  <span>
-                    <span className="font-semibold">OTP sent to:</span> +91 {phone}
-                  </span>
-                </p>
-                <button
-                  type="button"
-                  onClick={() => setStep(1)}
-                  className="text-xs text-blue-600 hover:text-blue-800 hover:underline mt-2 font-semibold"
-                >
-                  ← Change number
-                </button>
-              </div>
-
-              {/* OTP Input */}
-              <div>
-                <label className="block text-sm font-semibold text-gray-700 mb-2 text-center">
-                  Enter 6-Digit OTP *
-                </label>
-                <input
-                  type="text"
-                  value={otp}
-                  onChange={(e) => setOtp(e.target.value.replace(/\D/g, '').slice(0, 6))}
-                  placeholder="• • • • • •"
-                  maxLength="6"
-                  className="w-full px-4 py-4 border-2 border-gray-300 rounded-lg focus:border-blue-600 focus:ring-2 focus:ring-blue-200 focus:outline-none text-center text-3xl tracking-[0.5em] font-bold transition-all"
-                  required
-                  autoFocus
-                />
-              </div>
-
-              {/* Error Message */}
-              {error && (
-                <div className="bg-red-50 border-2 border-red-200 rounded-lg p-3 animate-[shake_0.3s_ease-in-out]">
-                  <p className="text-sm text-red-600 flex items-center">
-                    <span className="mr-2">⚠️</span>
-                    {error}
-                  </p>
-                </div>
-              )}
-
-              {/* Resend OTP */}
-              <div className="text-center">
-                <button
-                  type="button"
-                  onClick={handleResendOTP}
-                  className="text-sm text-blue-700 hover:text-blue-900 hover:underline font-semibold"
-                >
-                  Didn't receive OTP? Resend →
-                </button>
-              </div>
-
-              {/* Verify Button */}
-              <button
-                type="submit"
-                disabled={loading || otp.length !== 6}
-                className={`w-full py-3 rounded-lg font-bold text-white transition-all transform ${
-                  loading || otp.length !== 6
-                    ? 'bg-gray-400 cursor-not-allowed'
-                    : 'bg-gradient-to-r from-blue-900 to-blue-700 hover:from-blue-800 hover:to-blue-600 shadow-lg hover:shadow-xl hover:scale-105'
-                }`}
-              >
-                {loading ? (
-                  <span className="flex items-center justify-center">
-                    <span className="animate-spin mr-2">⏳</span>
-                    Verifying...
-                  </span>
-                ) : (
-                  <span className="flex items-center justify-center">
-                    Verify & Continue
-                    <span className="ml-2">✓</span>
-                  </span>
-                )}
-              </button>
-            </form>
+          {/* Error Message */}
+          {error && (
+            <div className="mt-4 bg-red-50 border-2 border-red-200 rounded-lg p-3 animate-[shake_0.3s_ease-in-out]">
+              <p className="text-sm text-red-600 flex items-center">
+                <span className="mr-2">⚠️</span>
+                {error}
+              </p>
+            </div>
           )}
-        </div>
 
-        {/* Footer */}
-        <div className="bg-gradient-to-r from-blue-50 to-indigo-50 p-4 rounded-b-2xl border-t border-blue-200">
-          <p className="text-xs text-blue-700 text-center flex items-center justify-center">
-            <span className="mr-1">🔒</span>
-            Your information is secure and encrypted
-          </p>
+          {/* Security Note */}
+          <div className="mt-6 text-center">
+            <p className="text-xs text-gray-500 flex items-center justify-center">
+              <span className="mr-1">🔒</span>
+              Your information is secure and encrypted
+            </p>
+          </div>
         </div>
       </div>
     </div>

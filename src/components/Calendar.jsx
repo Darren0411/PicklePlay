@@ -133,7 +133,7 @@ export default function Calendar({ selectedDate, onDateSelect, onClose }) {
 
           {/* Calendar Days */}
           <div className="grid grid-cols-7 gap-2">
-            {calendarDays.map((day, index) => {
+             {calendarDays.map((day, index) => {
               if (!day) {
                 return <div key={`empty-${index}`} className="aspect-square" />;
               }
