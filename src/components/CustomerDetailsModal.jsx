@@ -1,11 +1,13 @@
 import { useState } from 'react';
-import { auth, db } from '../firebase';
+import { auth } from '../firebase';
 import { GoogleAuthProvider, signInWithPopup } from 'firebase/auth';
-import { doc, getDoc, setDoc } from 'firebase/firestore';
+import PhoneNumberModal from './PhoneNumberModal';
 
 export default function CustomerDetailsModal({ selectedSlots, totalPrice, onClose, onSuccess }) {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
+  const [showPhoneModal, setShowPhoneModal] = useState(false);
+  const [googleUser, setGoogleUser] = useState(null);
 
   // Google Sign-In Handler
   const handleGoogleSignIn = async () => {
@@ -19,44 +21,18 @@ export default function CustomerDetailsModal({ selectedSlots, totalPrice, onClos
 
       console.log('✅ Google Sign-In successful:', user.displayName);
 
-      // Check if user exists in Firestore
-      const userId = user.uid;
-      const userRef = doc(db, 'users', userId);
-      const userSnap = await getDoc(userRef);
-
-      let userData;
-      let isNewUser = false;
-
-      if (!userSnap.exists()) {
-        // New user - save to Firestore
-        isNewUser = true;
-        userData = {
-          uid: userId,
-          name: user.displayName,
-          email: user.email,
-          photoURL: user.photoURL,
-          createdAt: new Date().toISOString(),
-          totalBookings: 0
-        };
-        
-        await setDoc(userRef, userData);
-        console.log('🎉 New user created in Firestore!');
-      } else {
-        // Existing user
-        userData = userSnap.data();
-        console.log('👋 Welcome back:', userData.name);
-      }
+      // Store Google user data temporarily
+      setGoogleUser({
+        uid: user.uid,
+        displayName: user.displayName,
+        email: user.email,
+        photoURL: user.photoURL
+      });
 
       setLoading(false);
       
-      // Pass user data to parent component
-      onSuccess({
-        uid: userId,
-        name: userData.name,
-        email: userData.email,
-        photoURL: userData.photoURL || user.photoURL,
-        isNewUser
-      });
+      // Show phone number modal
+      setShowPhoneModal(true);
     } catch (err) {
       console.error('❌ Google Sign-In error:', err);
       
@@ -72,6 +48,25 @@ export default function CustomerDetailsModal({ selectedSlots, totalPrice, onClos
       setLoading(false);
     }
   };
+
+  // Handle completion of phone number modal
+  const handlePhoneNumberComplete = (completeUserData) => {
+    console.log('✅ User profile completed:', completeUserData);
+    
+    // Pass complete user data to parent (BookingCalendar)
+    onSuccess(completeUserData);
+  };
+
+  // Show phone modal after Google sign-in
+  if (showPhoneModal && googleUser) {
+    return (
+      <PhoneNumberModal
+        user={googleUser}
+        onComplete={handlePhoneNumberComplete}
+        onClose={onClose}
+      />
+    );
+  }
 
   return (
     <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-50 p-4">
@@ -110,17 +105,43 @@ export default function CustomerDetailsModal({ selectedSlots, totalPrice, onClos
 
         {/* Content */}
         <div className="p-6">
+          {/* Steps Indicator */}
+          <div className="mb-6">
+            <div className="flex items-center justify-center space-x-2">
+              <div className="flex items-center">
+                <div className="w-8 h-8 rounded-full bg-green-600 text-white flex items-center justify-center font-bold text-sm">
+                  1
+                </div>
+                <span className="ml-2 text-sm font-semibold text-green-600">Sign In</span>
+              </div>
+              <div className="w-12 h-1 bg-gray-300 rounded"></div>
+              <div className="flex items-center">
+                <div className="w-8 h-8 rounded-full bg-gray-300 text-gray-600 flex items-center justify-center font-bold text-sm">
+                  2
+                </div>
+                <span className="ml-2 text-sm text-gray-500">Details</span>
+              </div>
+              <div className="w-12 h-1 bg-gray-300 rounded"></div>
+              <div className="flex items-center">
+                <div className="w-8 h-8 rounded-full bg-gray-300 text-gray-600 flex items-center justify-center font-bold text-sm">
+                  3
+                </div>
+                <span className="ml-2 text-sm text-gray-500">Payment</span>
+              </div>
+            </div>
+          </div>
+
           {/* Info Box */}
           <div className="bg-blue-50 border-2 border-blue-200 rounded-lg p-4 mb-6">
             <div className="flex items-start space-x-3">
               <span className="text-2xl">ℹ️</span>
               <div className="text-sm text-blue-800">
-                <p className="font-semibold mb-1">Why sign in?</p>
+                <p className="font-semibold mb-1">Quick & Easy Booking</p>
                 <ul className="space-y-1 text-xs">
-                  <li>✅ Secure your booking</li>
-                  <li>✅ Receive email confirmation</li>
-                  <li>✅ Track your bookings</li>
-                  <li>✅ Quick checkout next time</li>
+                  <li>✅ Sign in with Google</li>
+                  <li>✅ Enter your details</li>
+                  <li>✅ Complete payment</li>
+                  <li>✅ Get instant confirmation</li>
                 </ul>
               </div>
             </div>
@@ -130,7 +151,7 @@ export default function CustomerDetailsModal({ selectedSlots, totalPrice, onClos
           <button
             onClick={handleGoogleSignIn}
             disabled={loading}
-            className="w-full flex items-center justify-center gap-3 bg-white border-2 border-gray-300 hover:border-green-500 hover:bg-green-50 rounded-lg py-4 px-4 font-semibold text-gray-700 transition-all shadow-md hover:shadow-lg disabled:opacity-50 disabled:cursor-not-allowed"
+            className="w-full flex items-center justify-center gap-3 bg-white border-2 border-gray-300 hover:border-green-500 hover:bg-green-50 rounded-lg py-4 px-4 font-semibold text-gray-700 transition-all shadow-md hover:shadow-lg disabled:opacity-50 disabled:cursor-not-allowed transform hover:scale-105"
           >
             {loading ? (
               <>
