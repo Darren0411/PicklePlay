@@ -2,6 +2,7 @@ import React, { useState, useRef, useEffect } from 'react';
 import Calendar from '../components/Calendar';
 import CustomerDetailsModal from '../components/CustomerDetailsModal';
 import PaymentModal from '../components/PaymentModal';
+import SuccessModal from '../components/SuccessModal';
 import { getSlotsForDate } from '../utils/firestoreHelper';
 
 export default function Booking() {
@@ -16,7 +17,9 @@ export default function Booking() {
   // Modal states
   const [showCustomerModal, setShowCustomerModal] = useState(false);
   const [showPaymentModal, setShowPaymentModal] = useState(false);
+  const [showSuccessModal, setShowSuccessModal] = useState(false);
   const [customerData, setCustomerData] = useState(null);
+  const [bookingResult, setBookingResult] = useState(null);
 
   // Generate dates for current and next month only
   const generateAvailableDates = () => {
@@ -41,6 +44,20 @@ export default function Booking() {
     loadSlotsForDate(selectedDate);
   }, [selectedDate]);
 
+  // Check if slot is in the past
+  const isSlotPast = (slotDate, slotHour) => {
+    const now = new Date();
+    const slotDateTime = new Date(slotDate);
+    
+    // Set slot time
+    slotDateTime.setHours(slotHour, 0, 0, 0);
+    
+    // Add 1 hour buffer - slots within next hour are also unavailable
+    const oneHourFromNow = new Date(now.getTime() + 60 * 60 * 1000);
+    
+    return slotDateTime < oneHourFromNow;
+  };
+
   const loadSlotsForDate = async (date) => {
     setLoading(true);
     setSelectedSlots([]); // Clear selected slots when date changes
@@ -48,22 +65,33 @@ export default function Booking() {
     const result = await getSlotsForDate(date);
     
     if (result.success) {
+      const now = new Date();
+      const isToday = date.toDateString() === now.toDateString();
+      
       // Transform Firestore data to match UI format
-      const formattedSlots = result.slots.map(slot => ({
-        id: slot.id,
-        startTime: slot.startTime,
-        endTime: slot.endTime,
-        displayTime: `${formatTime(slot.hour)} - ${formatTime(slot.hour + 1)}`,
-        price: slot.price,
-        available: slot.status === 'available',
-        hour: slot.hour,
-        bookingId: slot.bookingId
-      }));
+      const formattedSlots = result.slots.map(slot => {
+        // Check if slot is in the past
+        const isPast = isToday && isSlotPast(date, slot.hour);
+        
+        return {
+          id: slot.id,
+          startTime: slot.startTime,
+          endTime: slot.endTime,
+          displayTime: `${formatTime(slot.hour)} - ${formatTime(slot.hour + 1)}`,
+          price: slot.price,
+          available: slot.status === 'available' && !isPast,
+          status: isPast ? 'past' : slot.status,
+          isPast: isPast,
+          hour: slot.hour,
+          bookingId: slot.bookingId
+        };
+      });
       
       // Sort by hour (8 AM to 9 PM)
       formattedSlots.sort((a, b) => a.hour - b.hour);
       
       setTimeSlots(formattedSlots);
+      console.log('✅ Loaded slots:', formattedSlots);
     } else {
       console.error('Error loading slots:', result.error);
       setTimeSlots([]);
@@ -81,7 +109,8 @@ export default function Booking() {
   const availableDates = generateAvailableDates();
 
   const toggleSlotSelection = (slot) => {
-    if (!slot.available) return;
+    // Don't allow selection of unavailable or past slots
+    if (!slot.available || slot.isPast) return;
 
     if (selectedSlots.find(s => s.id === slot.id)) {
       setSelectedSlots(selectedSlots.filter(s => s.id !== slot.id));
@@ -121,7 +150,7 @@ export default function Booking() {
     setShowCustomerModal(true);
   };
 
-  // Handle OTP verification success
+  // Handle customer details success
   const handleCustomerDetailsSuccess = (data) => {
     setCustomerData(data);
     setShowCustomerModal(false);
@@ -129,21 +158,32 @@ export default function Booking() {
   };
 
   // Handle payment success
-  const handlePaymentSuccess = (paymentData) => {
-    console.log('Payment successful:', paymentData);
+  const handlePaymentSuccess = (result) => {
+    console.log('✅ Payment successful:', result);
+    setBookingResult(result);
     setShowPaymentModal(false);
+    setShowSuccessModal(true);
     
-    // TODO: Save booking to Firestore
-    // Show success message
-    alert(`🎉 Booking Confirmed!\n\nTransaction ID: ${paymentData.transactionId}\nAmount Paid: ₹${paymentData.amount}\n\nThank you, ${customerData.name}!`);
+    // Reload slots to show updated availability
+    loadSlotsForDate(selectedDate);
     
-    // Reset state
+    // Clear selection
     setSelectedSlots([]);
+  };
+
+  // Handle success modal close
+  const handleSuccessClose = () => {
+    setShowSuccessModal(false);
+    setBookingResult(null);
     setCustomerData(null);
-    loadSlotsForDate(selectedDate); // Reload slots
   };
 
   const totalPrice = selectedSlots.reduce((sum, slot) => sum + slot.price, 0);
+
+  // Count only available slots (excluding past and booked)
+  const availableSlotCount = timeSlots.filter(
+    slot => slot.available && !slot.isPast
+  ).length;
 
   return (
     <div className="min-h-screen bg-gray-50 pb-24">
@@ -221,7 +261,7 @@ export default function Booking() {
         <div className="flex items-center justify-between text-xs">
           <div className="flex items-center text-gray-600">
             <span className="w-2 h-2 rounded-full bg-green-500 mr-2"></span>
-            <span>Available Slots ({timeSlots.filter(s => s.available).length})</span>
+            <span>Available Slots ({availableSlotCount})</span>
           </div>
           <div className="flex items-center text-gray-500">
             <span className="mr-1">ℹ️</span>
@@ -264,19 +304,33 @@ export default function Booking() {
                 <button
                   key={slot.id}
                   onClick={() => toggleSlotSelection(slot)}
-                  disabled={!slot.available}
+                  disabled={!slot.available || slot.isPast}
                   className={`w-full flex items-center justify-between p-3 rounded-lg transition-all ${
-                    !slot.available
-                      ? 'bg-gray-100 border-2 border-gray-300 cursor-not-allowed opacity-60'
+                    slot.isPast
+                      ? 'bg-gray-100 border-2 border-gray-200 cursor-not-allowed opacity-50'
+                      : !slot.available
+                      ? 'bg-red-50 border-2 border-red-200 cursor-not-allowed opacity-75'
                       : isSelected
-                      ? 'bg-green-50 border-2 border-green-600'
-                      : 'bg-white border-2 border-gray-200 hover:border-green-400'
+                      ? 'bg-green-50 border-2 border-green-600 shadow-md'
+                      : 'bg-white border-2 border-gray-200 hover:border-green-400 hover:shadow-sm'
                   }`}
                 >
                   <div className="flex items-center">
                     <div className="text-left">
-                      <div className="text-base font-semibold text-gray-800">
-                        {slot.displayTime}
+                      <div className="flex items-center gap-2">
+                        <div className="text-base font-semibold text-gray-800">
+                          {slot.displayTime}
+                        </div>
+                        {slot.isPast && (
+                          <span className="text-xs bg-gray-300 text-gray-600 px-2 py-0.5 rounded-full">
+                            Past
+                          </span>
+                        )}
+                        {slot.status === 'booked' && !slot.isPast && (
+                          <span className="text-xs bg-red-200 text-red-700 px-2 py-0.5 rounded-full">
+                            Booked
+                          </span>
+                        )}
                       </div>
                       <div className="text-xs text-gray-500">
                         1 hour slot
@@ -287,11 +341,15 @@ export default function Booking() {
                   <div className="flex items-center gap-3">
                     <div className="text-right">
                       <div className="text-base font-bold text-gray-800">
-                        ₹{slot.price}
+                        {slot.isPast ? (
+                          <span className="text-gray-400 text-sm">Unavailable</span>
+                        ) : (
+                          `₹${slot.price}`
+                        )}
                       </div>
                     </div>
                     
-                    {slot.available ? (
+                    {slot.available && !slot.isPast ? (
                       <div className={`w-7 h-7 rounded-full flex items-center justify-center border-2 ${
                         isSelected
                           ? 'bg-green-600 border-green-600'
@@ -302,8 +360,12 @@ export default function Booking() {
                         )}
                       </div>
                     ) : (
-                      <div className="w-7 h-7 rounded-full flex items-center justify-center bg-red-100 border-2 border-red-400">
-                        <span className="text-red-600 text-base">✕</span>
+                      <div className="w-7 h-7 rounded-full flex items-center justify-center bg-gray-200 border-2 border-gray-300">
+                        {slot.isPast ? (
+                          <span className="text-gray-500 text-base">⏱️</span>
+                        ) : (
+                          <span className="text-red-600 text-base">✕</span>
+                        )}
                       </div>
                     )}
                   </div>
@@ -330,9 +392,10 @@ export default function Booking() {
               </div>
               <button 
                 onClick={handleProceedClick}
-                className="bg-orange-600 text-white px-6 py-3 rounded-lg font-bold text-sm hover:bg-orange-700 transition-all shadow-lg"
+                className="bg-orange-600 text-white px-6 py-3 rounded-lg font-bold text-sm hover:bg-orange-700 transition-all shadow-lg flex items-center gap-2"
               >
-                PROCEED →
+                PROCEED
+                <span>→</span>
               </button>
             </div>
           </div>
@@ -354,9 +417,18 @@ export default function Booking() {
         <PaymentModal
           customerData={customerData}
           selectedSlots={selectedSlots}
+          selectedDate={selectedDate}
           totalPrice={totalPrice}
           onClose={() => setShowPaymentModal(false)}
           onPaymentSuccess={handlePaymentSuccess}
+        />
+      )}
+
+      {/* Success Modal */}
+      {showSuccessModal && bookingResult && (
+        <SuccessModal
+          bookingDetails={bookingResult}
+          onClose={handleSuccessClose}
         />
       )}
 
