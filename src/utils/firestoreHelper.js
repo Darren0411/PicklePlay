@@ -1,115 +1,137 @@
-import { collection, doc, setDoc, getDoc, getDocs, query, where } from 'firebase/firestore';
+import { collection, addDoc, getDocs, query, where, doc, updateDoc, writeBatch } from 'firebase/firestore';
 import { db } from '../firebase';
 
-// Generate unique slot ID
-export const generateSlotId = (date, hour) => {
-  const dateStr = date.toISOString().split('T')[0]; // "2025-12-09"
-  return `SLOT_${dateStr}_${hour}`;
-};
-
-// Initialize all slots for a specific date
 export const initializeSlotsForDate = async (date) => {
-  const dateStr = date.toISOString().split('T')[0];
-  
   try {
-    // Create slots from 8 AM to 9 PM (8 to 20)
-    for (let hour = 8; hour < 21; hour++) {
-      const slotId = generateSlotId(date, hour);
-      const slotRef = doc(db, 'slots', slotId);
+    const dateStr = date.toISOString().split('T')[0];
+    
+    // Check if slots already exist for this date
+    const slotsQuery = query(
+      collection(db, 'slots'),
+      where('date', '==', dateStr)
+    );
+    
+    const existingSlots = await getDocs(slotsQuery);
+    
+    let created = 0;
+    let skipped = existingSlots.size;
+    
+    // Only create if no slots exist
+    if (existingSlots.empty) {
+      const timeSlots = [
+        { hour: 8, time: '8:00 - 9:00' },
+        { hour: 9, time: '9:00 - 10:00' },
+        { hour: 10, time: '10:00 - 11:00' },
+        { hour: 11, time: '11:00 - 12:00' },
+        { hour: 12, time: '12:00 - 1:00' },
+        { hour: 13, time: '1:00 - 2:00' },
+        { hour: 14, time: '2:00 - 3:00' },
+        { hour: 15, time: '3:00 - 4:00' },
+        { hour: 16, time: '4:00 - 5:00' },
+        { hour: 17, time: '5:00 - 6:00' },
+        { hour: 18, time: '6:00 - 7:00' },
+        { hour: 19, time: '7:00 - 8:00' },
+        { hour: 20, time: '8:00 - 9:00' }
+      ];
+
+      const batch = writeBatch(db);
       
-      // Check if slot already exists
-      const slotDoc = await getDoc(slotRef);
-      
-      if (!slotDoc.exists()) {
-        // Create new slot
-        await setDoc(slotRef, {
+      for (const slot of timeSlots) {
+        const slotRef = doc(db, 'slots', `${dateStr}_${slot.hour}`);
+        
+        batch.set(slotRef, {
           date: dateStr,
-          hour: hour,
-          startTime: `${hour}:00`,
-          endTime: `${hour + 1}:00`,
+          time: slot.time,
+          hour: slot.hour,
+          startTime: `${slot.hour}:00`,
+          endTime: `${slot.hour + 1}:00`,
           price: 200,
-          status: 'available', // available, booked, blocked
+          status: 'available',
+          courtNumber: 1,
+          createdAt: new Date(),
           bookingId: null,
-          createdAt: new Date()
+          userId: null
         });
         
-        console.log(`✅ Created slot: ${slotId}`);
+        created++;
       }
+
+      await batch.commit();
+      console.log(`✅ Created ${created} slots for ${dateStr}`);
+    } else {
+      console.log(`⏭️ Skipped ${dateStr} - ${existingSlots.size} slots already exist`);
     }
-    
-    return { success: true };
+
+    return { 
+      success: true, 
+      created, 
+      skipped,
+      date: dateStr 
+    };
   } catch (error) {
     console.error('Error initializing slots:', error);
-    return { success: false, error };
+    return { 
+      success: false, 
+      error: error.message,
+      created: 0,
+      skipped: 0
+    };
   }
 };
 
-// Get all slots for a specific date
 export const getSlotsForDate = async (date) => {
-  const dateStr = date.toISOString().split('T')[0];
-  
   try {
+    const dateStr = date.toISOString().split('T')[0];
+    
     const slotsQuery = query(
       collection(db, 'slots'),
       where('date', '==', dateStr)
     );
     
     const querySnapshot = await getDocs(slotsQuery);
-    const slots = [];
     
-    querySnapshot.forEach((doc) => {
-      slots.push({
-        id: doc.id,
-        ...doc.data()
-      });
-    });
-    
-    // Sort by hour
-    slots.sort((a, b) => a.hour - b.hour);
-    
+    const slots = querySnapshot.docs.map(doc => ({
+      id: doc.id,
+      ...doc.data()
+    }));
+
     return { success: true, slots };
   } catch (error) {
-    console.error('Error getting slots:', error);
-    return { success: false, error, slots: [] };
+    console.error('Error fetching slots:', error);
+    return { success: false, error: error.message, slots: [] };
   }
 };
 
-// Book a slot
-export const bookSlot = async (slotId, bookingData) => {
+export const createBooking = async (bookingData) => {
   try {
-    const slotRef = doc(db, 'slots', slotId);
-    const slotDoc = await getDoc(slotRef);
-    
-    if (!slotDoc.exists()) {
-      return { success: false, error: 'Slot does not exist' };
-    }
-    
-    const slotData = slotDoc.data();
-    
-    if (slotData.status !== 'available') {
-      return { success: false, error: 'Slot is not available' };
-    }
-    
-    // Create booking document
-    const bookingRef = doc(collection(db, 'bookings'));
-    await setDoc(bookingRef, {
+    const bookingRef = await addDoc(collection(db, 'bookings'), {
       ...bookingData,
-      slotIds: [slotId],
-      totalAmount: bookingData.totalAmount || 200,
-      status: 'confirmed',
-      createdAt: new Date()
+      createdAt: new Date(),
+      status: 'confirmed'
     });
+
+    const batch = writeBatch(db);
     
-    // Update slot status
-    await setDoc(slotRef, {
-      ...slotData,
-      status: 'booked',
-      bookingId: bookingRef.id
-    });
-    
-    return { success: true, bookingId: bookingRef.id };
+    for (const slotId of bookingData.slotIds) {
+      const slotRef = doc(db, 'slots', slotId);
+      batch.update(slotRef, {
+        status: 'booked',
+        bookingId: bookingRef.id,
+        userId: bookingData.userId
+      });
+    }
+
+    await batch.commit();
+
+    return { 
+      success: true, 
+      bookingId: bookingRef.id 
+    };
   } catch (error) {
-    console.error('Error booking slot:', error);
-    return { success: false, error };
+    console.error('Error creating booking:', error);
+    return { 
+      success: false, 
+      error: error.message 
+    };
   }
 };
