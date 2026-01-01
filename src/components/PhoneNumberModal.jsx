@@ -201,7 +201,7 @@ export default function PhoneNumberModal({ user, onComplete, onClose }) {
               <div className="flex-1">
                 <p className="text-xs text-blue-900 font-semibold mb-1">Why we need this:</p>
                 <ul className="text-xs text-blue-800 space-y-1">
-                  <li>• Booking confirmation via SMS & Email</li>
+                  <li>• Booking confirmation via Email</li>
                   <li>• Quick check-in at the venue</li>
                   <li>• Emergency updates about your booking</li>
                 </ul>

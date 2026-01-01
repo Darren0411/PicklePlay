@@ -289,13 +289,7 @@ export default function PaymentModal({ customerData, selectedSlots, totalPrice, 
             </div>
           )}
 
-          {/* Demo Mode Notice */}
-          <div className="bg-gradient-to-r from-yellow-50 to-amber-50 border-2 border-yellow-300 rounded-lg p-3 mb-6">
-            <p className="text-xs text-yellow-800 text-center flex items-center justify-center">
-              <span className="mr-2 text-lg">🧪</span>
-              <span><strong>Demo Mode:</strong> This is a test booking. Email confirmation will be sent!</span>
-            </p>
-          </div>
+
 
           {/* Confirm Booking Button */}
           <button
