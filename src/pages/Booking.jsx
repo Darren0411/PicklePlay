@@ -4,6 +4,8 @@ import CustomerDetailsModal from '../components/CustomerDetailsModal';
 import PaymentModal from '../components/PaymentModal';
 import SuccessModal from '../components/SuccessModal';
 import { getSlotsForDate } from '../utils/firestoreHelper';
+import { collection, addDoc, updateDoc, doc, deleteDoc } from 'firebase/firestore';
+import { db, auth } from '../firebase';
 
 export default function Booking() {
   const [selectedDate, setSelectedDate] = useState(new Date());
@@ -13,6 +15,7 @@ export default function Booking() {
   const dateRefs = useRef({});
   const [timeSlots, setTimeSlots] = useState([]);
   const [loading, setLoading] = useState(false);
+  const [paymentLoading, setPaymentLoading] = useState(false);
   
   // Modal states
   const [showCustomerModal, setShowCustomerModal] = useState(false);
@@ -58,6 +61,14 @@ export default function Booking() {
     return slotDateTime < oneHourFromNow;
   };
 
+  // ✅ Format time with AM/PM
+  const formatTime = (hour) => {
+    if (hour === 0) return '12:00 AM';
+    if (hour === 12) return '12:00 PM';
+    if (hour < 12) return `${hour}:00 AM`;
+    return `${hour - 12}:00 PM`;
+  };
+
   const loadSlotsForDate = async (date) => {
     setLoading(true);
     setSelectedSlots([]); // Clear selected slots when date changes
@@ -73,11 +84,15 @@ export default function Booking() {
         // Check if slot is in the past
         const isPast = isToday && isSlotPast(date, slot.hour);
         
+        // ✅ Format with AM/PM
+        const startTime = formatTime(slot.hour);
+        const endTime = formatTime(slot.hour + 1);
+        
         return {
           id: slot.id,
           startTime: slot.startTime,
           endTime: slot.endTime,
-          displayTime: `${formatTime(slot.hour)} - ${formatTime(slot.hour + 1)}`,
+          displayTime: `${startTime} - ${endTime}`, // ✅ Shows "8:00 AM - 9:00 AM"
           price: slot.price,
           available: slot.status === 'available' && !isPast,
           status: isPast ? 'past' : slot.status,
@@ -100,10 +115,13 @@ export default function Booking() {
     setLoading(false);
   };
 
-  const formatTime = (hour) => {
-    if (hour === 12) return '12:00';
-    if (hour > 12) return `${hour - 12}:00`;
-    return `${hour}:00`;
+  const formatDateForDisplay = (date) => {
+    return date.toLocaleDateString('en-US', {
+      weekday: 'long',
+      year: 'numeric',
+      month: 'long',
+      day: 'numeric'
+    });
   };
 
   const availableDates = generateAvailableDates();
@@ -157,18 +175,21 @@ export default function Booking() {
     setShowPaymentModal(true);
   };
 
-  // Handle payment success
-  const handlePaymentSuccess = (result) => {
-    console.log('✅ Payment successful:', result);
-    setBookingResult(result);
+  // Handle payment method selection and booking
+  const handlePaymentSuccess = async (bookingDetails) => {
+    console.log('✅ Payment completed:', bookingDetails);
+    
+    // Close payment modal
     setShowPaymentModal(false);
+    
+    // Show success modal with booking details
+    setBookingResult(bookingDetails);
     setShowSuccessModal(true);
     
-    // Reload slots to show updated availability
-    loadSlotsForDate(selectedDate);
-    
-    // Clear selection
+    // Clear selected slots and refresh
     setSelectedSlots([]);
+    loadSlotsForDate(selectedDate);
+    setPaymentLoading(false);
   };
 
   // Handle success modal close
@@ -280,6 +301,17 @@ export default function Booking() {
         </div>
       )}
 
+      {/* Payment Processing State */}
+      {paymentLoading && (
+        <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-50">
+          <div className="bg-white rounded-2xl p-8 max-w-sm mx-4 text-center">
+            <div className="animate-spin rounded-full h-16 w-16 border-b-4 border-green-600 mx-auto mb-4"></div>
+            <h3 className="text-lg font-bold text-gray-800 mb-2">Processing Payment...</h3>
+            <p className="text-sm text-gray-600">Please don't close this window</p>
+          </div>
+        </div>
+      )}
+
       {/* No Slots Available */}
       {!loading && timeSlots.length === 0 && (
         <div className="container mx-auto px-4 py-8">
@@ -318,8 +350,9 @@ export default function Booking() {
                   <div className="flex items-center">
                     <div className="text-left">
                       <div className="flex items-center gap-2">
+                        {/* ✅ Added "Time:" prefix with AM/PM format */}
                         <div className="text-base font-semibold text-gray-800">
-                          {slot.displayTime}
+                          Time: {slot.displayTime}
                         </div>
                         {slot.isPast && (
                           <span className="text-xs bg-gray-300 text-gray-600 px-2 py-0.5 rounded-full">
@@ -377,7 +410,7 @@ export default function Booking() {
       )}
 
       {/* Bottom Fixed Bar - Proceed Button */}
-      {selectedSlots.length > 0 && (
+      {selectedSlots.length > 0 && !paymentLoading && (
         <div className="fixed bottom-0 left-0 right-0 bg-white border-t-2 border-gray-200 shadow-lg z-50">
           <div className="container mx-auto px-4 py-3">
             <div className="flex items-center justify-between">
@@ -392,9 +425,10 @@ export default function Booking() {
               </div>
               <button 
                 onClick={handleProceedClick}
-                className="bg-orange-600 text-white px-6 py-3 rounded-lg font-bold text-sm hover:bg-orange-700 transition-all shadow-lg flex items-center gap-2"
+                disabled={loading || paymentLoading}
+                className="bg-orange-600 text-white px-6 py-3 rounded-lg font-bold text-sm hover:bg-orange-700 transition-all shadow-lg flex items-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed"
               >
-                PROCEED
+                {loading || paymentLoading ? 'Processing...' : 'PROCEED'}
                 <span>→</span>
               </button>
             </div>

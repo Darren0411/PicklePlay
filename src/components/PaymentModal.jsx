@@ -1,144 +1,246 @@
 import { useState } from 'react';
-import { db } from '../firebase';
-import { collection, addDoc, updateDoc, doc, increment } from 'firebase/firestore';
-import { sendBookingConfirmationEmail } from '../services/emailService';
+import { db, auth } from '../firebase';
+import { collection, addDoc, updateDoc, doc, deleteDoc } from 'firebase/firestore';
 
-export default function PaymentModal({ customerData, selectedSlots, totalPrice, onClose, onPaymentSuccess }) {
-  const [paymentMethod, setPaymentMethod] = useState('venue'); // 'venue' or 'online'
-  const [upiId, setUpiId] = useState('');
+export default function PaymentModal({ 
+  customerData, 
+  selectedSlots, 
+  selectedDate,
+  totalPrice, 
+  onClose, 
+  onPaymentSuccess 
+}) {
+  const [paymentMethod, setPaymentMethod] = useState('online');
   const [processing, setProcessing] = useState(false);
 
-  const handleConfirmBooking = async (e) => {
+  const formatDateForDisplay = (date) => {
+    const dateObj = new Date(date);
+    return dateObj.toLocaleDateString('en-US', {
+      weekday: 'long',
+      year: 'numeric',
+      month: 'long',
+      day: 'numeric'
+    });
+  };
+
+  const handlePayment = async (e) => {
     e.preventDefault();
+    
+    if (paymentMethod === 'venue') {
+      handleVenuePayment();
+    } else {
+      handleOnlinePayment();
+    }
+  };
+
+  const handleVenuePayment = async () => {
     setProcessing(true);
-
+    
     try {
-      // Get the date from slots (handle different possible structures)
-      let bookingDateStr;
-      
-      if (selectedSlots[0].date) {
-        // If slots have date property
-        bookingDateStr = selectedSlots[0].date;
-      } else if (selectedSlots[0].slotDate) {
-        // Alternative property name
-        bookingDateStr = selectedSlots[0].slotDate;
-      } else {
-        // Fallback to today's date
-        bookingDateStr = new Date().toISOString().split('T')[0];
-        console.warn('⚠️ No date found in slot, using today:', bookingDateStr);
+      const user = auth.currentUser;
+      if (!user) {
+        alert('⚠️ Please sign in to complete booking');
+        setProcessing(false);
+        return;
       }
 
-      // Format booking date
-      const bookingDate = new Date(bookingDateStr);
-      const formattedDate = bookingDate.toLocaleDateString('en-IN', {
-        weekday: 'long',
-        day: '2-digit',
-        month: 'long',
-        year: 'numeric'
-      });
-
-      console.log('📅 Booking date:', bookingDateStr);
-      console.log('📅 Formatted date:', formattedDate);
-
-      // Create booking object
       const bookingData = {
-        // User info
-        userId: customerData.uid,
-        customerName: customerData.name,
-        customerEmail: customerData.email,
-        customerPhoto: customerData.photoURL || null,
-        
-        // Booking details
-        date: bookingDateStr, // ✅ Fixed: Make sure this is not undefined
-        formattedDate: formattedDate,
+        userId: user.uid,
+        customerName: customerData.name || user.displayName || 'Guest',
+        customerEmail: customerData.email || user.email,
+        date: selectedDate.toISOString(),
+        formattedDate: formatDateForDisplay(selectedDate),
         slots: selectedSlots.map(slot => ({
-          time: slot.time || slot.slotTime || 'Not specified',
-          price: slot.price || 0,
-          slotId: slot.id || slot.slotId || ''
+          time: slot.displayTime,
+          price: slot.price,
+          slotId: slot.id
         })),
-        totalSlots: selectedSlots.length,
-        totalPrice: totalPrice || 0,
-        
-        // Payment info
-        paymentMethod: paymentMethod === 'venue' ? 'Pay at Venue' : 'Online Payment',
-        paymentStatus: paymentMethod === 'venue' ? 'pending' : 'completed',
-        upiId: paymentMethod === 'online' ? upiId : null,
-        
-        // Status
+        totalAmount: totalPrice,
+        paymentStatus: 'pending',
         bookingStatus: 'confirmed',
-        
-        // Timestamps
-        createdAt: new Date().toISOString(),
-        updatedAt: new Date().toISOString()
+        paymentMethod: 'venue',
+        createdAt: new Date(),
       };
 
-      console.log('💾 Booking data to save:', bookingData);
-      console.log('💾 Saving booking to Firestore...');
-      
-      // Save booking to Firestore
       const bookingRef = await addDoc(collection(db, 'bookings'), bookingData);
-      const bookingId = bookingRef.id;
-      
-      console.log('✅ Booking saved with ID:', bookingId);
+      console.log('✅ Booking created for venue payment:', bookingRef.id);
 
-      // Update user's total bookings count
-      const userRef = doc(db, 'users', customerData.uid);
-      await updateDoc(userRef, {
-        totalBookings: increment(1),
-        lastBookingDate: new Date().toISOString()
+      await updateDoc(doc(db, 'bookings', bookingRef.id), {
+        bookingStatus: 'confirmed',
       });
 
-      console.log('✅ User booking count updated');
-
-      // Update each slot status to 'booked'
-      for (const slot of selectedSlots) {
-        const slotRef = doc(db, 'slots', slot.id);
-        await updateDoc(slotRef, {
-          status: 'booked',
-          bookedBy: customerData.uid,
-          bookingId: bookingId,
-          bookedAt: new Date().toISOString()
-        });
-      }
-
-      console.log('✅ Slot statuses updated');
-
-      // Mock payment processing delay (for better UX)
-      await new Promise(resolve => setTimeout(resolve, 2000));
-
-      // Prepare success data
-      const successData = {
-        bookingId: bookingId,
-        transactionId: paymentMethod === 'venue' ? `VENUE${Date.now()}` : `TXN${Date.now()}`,
-        paymentMethod: bookingData.paymentMethod,
-        amount: totalPrice,
-        timestamp: new Date(),
-        paymentStatus: bookingData.paymentStatus,
-        customerName: customerData.name,
-        customerEmail: customerData.email,
-        formattedDate: formattedDate,
-        slots: selectedSlots
-      };
-
-      // Send confirmation email
-      console.log('📧 Sending confirmation email...');
-      const emailResult = await sendBookingConfirmationEmail(successData);
-      
-      if (emailResult.success) {
-        console.log('✅ Confirmation email sent successfully!');
-      } else {
-        console.warn('⚠️ Email sending failed, but booking was successful');
-        // Still proceed even if email fails
-      }
+      await Promise.all(
+        selectedSlots.map(slot =>
+          updateDoc(doc(db, 'slots', slot.id), { 
+            status: 'booked',
+            bookingId: bookingRef.id
+          })
+        )
+      );
 
       setProcessing(false);
-      
-      // Call success callback
-      onPaymentSuccess(successData);
+
+      onPaymentSuccess({
+        id: bookingRef.id,
+        userId: user.uid,
+        customerName: customerData.name || user.displayName || 'Guest',
+        customerEmail: customerData.email || user.email,
+        date: selectedDate.toISOString(),
+        formattedDate: formatDateForDisplay(selectedDate),
+        slots: selectedSlots.map(slot => ({
+          time: slot.displayTime,
+          price: slot.price,
+        })),
+        totalAmount: totalPrice,
+        paymentStatus: 'pending',
+        bookingStatus: 'confirmed',
+        paymentMethod: 'venue',
+      });
+
     } catch (error) {
-      console.error('❌ Error confirming booking:', error);
-      console.error('❌ Error details:', error.message);
-      alert(`Failed to confirm booking: ${error.message}`);
+      console.error('❌ Venue booking error:', error);
+      alert('❌ Booking failed: ' + error.message);
+      setProcessing(false);
+    }
+  };
+
+  const handleOnlinePayment = async () => {
+    setProcessing(true);
+    
+    try {
+      const user = auth.currentUser;
+      if (!user) {
+        alert('⚠️ Please sign in to complete booking');
+        setProcessing(false);
+        return;
+      }
+
+      const totalAmount = totalPrice;
+
+      const bookingData = {
+        userId: user.uid,
+        customerName: customerData.name || user.displayName || 'Guest',
+        customerEmail: customerData.email || user.email,
+        date: selectedDate.toISOString(),
+        formattedDate: formatDateForDisplay(selectedDate),
+        slots: selectedSlots.map(slot => ({
+          time: slot.displayTime,
+          price: slot.price,
+          slotId: slot.id
+        })),
+        totalAmount: totalAmount,
+        paymentStatus: 'pending',
+        bookingStatus: 'pending',
+        paymentMethod: 'online',
+        createdAt: new Date(),
+      };
+
+      const bookingRef = await addDoc(collection(db, 'bookings'), bookingData);
+      console.log('✅ Booking created for online payment:', bookingRef.id);
+
+      // ✅ SIMPLIFIED: Remove config - show ALL payment methods (includes UPI)
+      const options = {
+        key: import.meta.env.VITE_RAZORPAY_KEY_ID,
+        amount: totalAmount * 100,
+        currency: 'INR',
+        name: 'PicklePlay',
+        description: `Court Booking - ${formatDateForDisplay(selectedDate)}`,
+        image: '/favicon.svg',
+        
+        prefill: {
+          name: customerData.name || user.displayName || 'Guest',
+          email: customerData.email || user.email,
+          contact: customerData.phone || '9999999999',
+        },
+        notes: {
+          bookingId: bookingRef.id,
+          date: selectedDate.toISOString(),
+          slots: selectedSlots.length,
+        },
+        theme: {
+          color: '#16a34a',
+        },
+        
+        // ✅ REMOVED config - now it will show all payment methods including UPI
+        
+        handler: async function (response) {
+          console.log('✅ Payment successful:', response);
+          
+          try {
+            await updateDoc(doc(db, 'bookings', bookingRef.id), {
+              paymentStatus: 'paid',
+              bookingStatus: 'confirmed',
+              paymentId: response.razorpay_payment_id,
+              razorpayOrderId: response.razorpay_order_id || '',
+              razorpaySignature: response.razorpay_signature || '',
+              paidAt: new Date(),
+            });
+
+            await Promise.all(
+              selectedSlots.map(slot =>
+                updateDoc(doc(db, 'slots', slot.id), { 
+                  status: 'booked',
+                  bookingId: bookingRef.id
+                })
+              )
+            );
+
+            console.log('✅ Booking confirmed and slots updated');
+            setProcessing(false);
+
+            onPaymentSuccess({
+              id: bookingRef.id,
+              userId: user.uid,
+              customerName: customerData.name || user.displayName || 'Guest',
+              customerEmail: customerData.email || user.email,
+              date: selectedDate.toISOString(),
+              formattedDate: formatDateForDisplay(selectedDate),
+              slots: selectedSlots.map(slot => ({
+                time: slot.displayTime,
+                price: slot.price,
+              })),
+              totalAmount: totalAmount,
+              paymentStatus: 'paid',
+              bookingStatus: 'confirmed',
+              paymentId: response.razorpay_payment_id,
+              paymentMethod: 'online',
+            });
+
+          } catch (error) {
+            console.error('❌ Error updating booking:', error);
+            alert('Payment successful but booking update failed. Contact support with Payment ID: ' + response.razorpay_payment_id);
+            setProcessing(false);
+          }
+        },
+        modal: {
+          ondismiss: async function () {
+            console.log('❌ Payment cancelled by user');
+            
+            try {
+              await deleteDoc(doc(db, 'bookings', bookingRef.id));
+              console.log('🗑️ Deleted pending booking');
+            } catch (error) {
+              console.error('Error deleting booking:', error);
+            }
+            
+            setProcessing(false);
+            alert('❌ Payment was cancelled. Please try again.');
+          },
+        },
+      };
+
+      if (typeof window.Razorpay === 'undefined') {
+        alert('❌ Payment gateway failed to load. Please refresh the page.');
+        setProcessing(false);
+        return;
+      }
+
+      const razorpay = new window.Razorpay(options);
+      razorpay.open();
+
+    } catch (error) {
+      console.error('❌ Payment error:', error);
+      alert('❌ Payment failed: ' + error.message);
       setProcessing(false);
     }
   };
@@ -146,26 +248,24 @@ export default function PaymentModal({ customerData, selectedSlots, totalPrice, 
   return (
     <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-50 p-4">
       <div className="bg-white rounded-2xl max-w-md w-full shadow-2xl relative max-h-[90vh] overflow-y-auto animate-[slideUp_0.3s_ease-out]">
-        {/* Close Button */}
         <button
           onClick={onClose}
-          className="absolute top-4 right-4 text-gray-400 hover:text-gray-600 text-2xl z-10 transition-colors"
+          disabled={processing}
+          className="absolute top-4 right-4 text-gray-400 hover:text-gray-600 text-2xl z-10 transition-colors disabled:opacity-50"
         >
           ✕
         </button>
 
-        {/* Header */}
         <div className="bg-gradient-to-r from-green-600 to-green-500 text-white p-6 rounded-t-2xl">
           <div className="flex items-center space-x-3">
-            <div className="text-3xl">🎾</div>
+            <div className="text-3xl">💳</div>
             <div>
-              <h2 className="text-2xl font-bold">Confirm Your Booking</h2>
-              <p className="text-green-100 text-sm mt-1">Choose payment method</p>
+              <h2 className="text-2xl font-bold">Payment</h2>
+              <p className="text-green-100 text-sm mt-1">Choose your payment method</p>
             </div>
           </div>
         </div>
 
-        {/* Customer Info */}
         <div className="bg-gradient-to-r from-green-50 to-emerald-50 p-4 border-b border-green-200">
           <div className="flex items-center space-x-3">
             {customerData.photoURL && (
@@ -188,42 +288,76 @@ export default function PaymentModal({ customerData, selectedSlots, totalPrice, 
           </div>
         </div>
 
-        {/* Booking Summary */}
         <div className="p-6 border-b">
           <div className="flex items-center justify-between mb-3">
             <h3 className="font-bold text-gray-800 flex items-center">
-              <span className="text-xl mr-2">🏓</span>
+              <span className="text-xl mr-2">🎾</span>
               Booking Summary
             </h3>
           </div>
-          <div className="space-y-2">
-            <div className="flex justify-between items-center p-3 bg-gray-50 rounded-lg">
-              <span className="text-gray-600 text-sm">
-                {selectedSlots.length} Slot{selectedSlots.length > 1 ? 's' : ''} Selected
+          
+          <div className="mb-3 p-3 bg-blue-50 rounded-lg border-2 border-blue-200">
+            <div className="flex items-center justify-between">
+              <span className="text-sm text-blue-700">Date:</span>
+              <span className="text-sm font-bold text-blue-900">
+                {formatDateForDisplay(selectedDate)}
               </span>
-              <span className="font-semibold text-gray-800">{selectedSlots.length} × ₹{selectedSlots[0]?.price}</span>
             </div>
-            <div className="flex justify-between items-center p-4 bg-gradient-to-r from-green-600 to-green-500 text-white rounded-lg shadow-lg">
-              <span className="font-bold text-lg">Total Amount</span>
-              <span className="font-bold text-2xl">₹{totalPrice}</span>
-            </div>
+          </div>
+
+          <div className="space-y-2 mb-3">
+            {selectedSlots.map((slot, index) => (
+              <div key={index} className="flex justify-between items-center p-3 bg-gray-50 rounded-lg">
+                <span className="text-gray-700 text-sm font-medium">
+                  Time: {slot.displayTime}
+                </span>
+                <span className="font-semibold text-gray-800">₹{slot.price}</span>
+              </div>
+            ))}
+          </div>
+
+          <div className="flex justify-between items-center p-4 bg-gradient-to-r from-green-600 to-green-500 text-white rounded-lg shadow-lg">
+            <span className="font-bold text-lg">Total Amount</span>
+            <span className="font-bold text-2xl">₹{totalPrice}</span>
           </div>
         </div>
 
-        {/* Payment Options Form */}
-        <form onSubmit={handleConfirmBooking} className="p-6">
-          {/* Payment Method Selection */}
+        <form onSubmit={handlePayment} className="p-6">
           <div className="mb-6">
-            <label className="block text-sm font-semibold text-gray-700 mb-3 items-center">
+            <label className="block text-sm font-semibold text-gray-700 mb-3 flex items-center">
               <span className="text-xl mr-2">💰</span>
               Payment Method
             </label>
             <div className="space-y-3">
-              {/* Pay at Venue (Default) */}
+              <button
+                type="button"
+                onClick={() => setPaymentMethod('online')}
+                disabled={processing}
+                className={`w-full p-4 rounded-xl border-2 transition-all flex items-center transform hover:scale-105 disabled:opacity-50 disabled:cursor-not-allowed ${
+                  paymentMethod === 'online'
+                    ? 'border-green-600 bg-green-50 shadow-lg'
+                    : 'border-gray-300 hover:border-green-400 bg-white'
+                }`}
+              >
+                <div className={`w-6 h-6 rounded-full border-2 mr-3 flex items-center justify-center ${
+                  paymentMethod === 'online' ? 'border-green-600' : 'border-gray-300'
+                }`}>
+                  {paymentMethod === 'online' && (
+                    <div className="w-3 h-3 rounded-full bg-green-600"></div>
+                  )}
+                </div>
+                <div className="flex-1 text-left">
+                  <div className="font-semibold text-gray-800">Pay Now (Recommended)</div>
+                  <div className="text-xs text-gray-500">UPI, Cards, Net Banking & More</div>
+                </div>
+                <span className="text-3xl">💳</span>
+              </button>
+
               <button
                 type="button"
                 onClick={() => setPaymentMethod('venue')}
-                className={`w-full p-4 rounded-xl border-2 transition-all flex items-center transform hover:scale-105 ${
+                disabled={processing}
+                className={`w-full p-4 rounded-xl border-2 transition-all flex items-center transform hover:scale-105 disabled:opacity-50 disabled:cursor-not-allowed ${
                   paymentMethod === 'venue'
                     ? 'border-green-600 bg-green-50 shadow-lg'
                     : 'border-gray-300 hover:border-green-400 bg-white'
@@ -242,61 +376,32 @@ export default function PaymentModal({ customerData, selectedSlots, totalPrice, 
                 </div>
                 <span className="text-3xl">🏢</span>
               </button>
-
-              {/* Pay Now */}
-              <button
-                type="button"
-                onClick={() => setPaymentMethod('online')}
-                className={`w-full p-4 rounded-xl border-2 transition-all flex items-center transform hover:scale-105 ${
-                  paymentMethod === 'online'
-                    ? 'border-green-600 bg-green-50 shadow-lg'
-                    : 'border-gray-300 hover:border-green-400 bg-white'
-                }`}
-              >
-                <div className={`w-6 h-6 rounded-full border-2 mr-3 flex items-center justify-center ${
-                  paymentMethod === 'online' ? 'border-green-600' : 'border-gray-300'
-                }`}>
-                  {paymentMethod === 'online' && (
-                    <div className="w-3 h-3 rounded-full bg-green-600"></div>
-                  )}
-                </div>
-                <div className="flex-1 text-left">
-                  <div className="font-semibold text-gray-800">Pay Now</div>
-                  <div className="text-xs text-gray-500">Pay online via UPI, Card, or Net Banking</div>
-                </div>
-                <span className="text-3xl">💳</span>
-              </button>
             </div>
           </div>
 
-          {/* UPI ID Input (if Pay Now selected) */}
           {paymentMethod === 'online' && (
-            <div className="mb-6 animate-[slideDown_0.3s_ease-out]">
-              <label className="block text-sm font-semibold text-gray-700 mb-2">
-                Enter UPI ID
-              </label>
-              <input
-                type="text"
-                value={upiId}
-                onChange={(e) => setUpiId(e.target.value)}
-                placeholder="yourname@paytm"
-                className="w-full px-4 py-3 border-2 border-gray-300 rounded-lg focus:border-green-600 focus:ring-2 focus:ring-green-200 focus:outline-none transition-all"
-                required={paymentMethod === 'online'}
-              />
-              <p className="text-xs text-gray-500 mt-1">
-                Or you can pay via Card/Net Banking after confirmation
-              </p>
+            <div className="mb-6 p-4 bg-blue-50 border-2 border-blue-200 rounded-lg animate-[slideDown_0.3s_ease-out]">
+              <div className="flex items-start space-x-2">
+                <span className="text-xl">ℹ️</span>
+                <div className="text-sm text-blue-800">
+                  <p className="font-semibold mb-1">Secure Online Payment</p>
+                  <ul className="text-xs space-y-1 text-blue-700">
+                    <li>• <strong>UPI:</strong> PhonePe, GPay, Paytm, BHIM</li>
+                    <li>• <strong>Cards:</strong> Visa, Mastercard, Amex, RuPay</li>
+                    <li>• <strong>Net Banking:</strong> All major banks</li>
+                    <li>• <strong>Wallets:</strong> Paytm, Mobikwik, etc.</li>
+                    <li>• Instant booking confirmation</li>
+                  </ul>
+                </div>
+              </div>
             </div>
           )}
 
-
-
-          {/* Confirm Booking Button */}
           <button
             type="submit"
-            disabled={processing || (paymentMethod === 'online' && !upiId)}
+            disabled={processing}
             className={`w-full py-4 rounded-lg font-bold text-white transition-all text-lg transform ${
-              processing || (paymentMethod === 'online' && !upiId)
+              processing
                 ? 'bg-gray-400 cursor-not-allowed'
                 : 'bg-gradient-to-r from-green-600 to-green-500 hover:from-green-700 hover:to-green-600 shadow-lg hover:shadow-xl hover:scale-105'
             }`}
@@ -304,23 +409,32 @@ export default function PaymentModal({ customerData, selectedSlots, totalPrice, 
             {processing ? (
               <span className="flex items-center justify-center">
                 <span className="animate-spin mr-2 text-xl">⏳</span>
-                Confirming Booking...
+                Processing...
               </span>
             ) : (
               <span className="flex items-center justify-center">
-                <span className="mr-2">✓</span>
-                Confirm Booking
-                <span className="ml-2">→</span>
+                {paymentMethod === 'online' ? (
+                  <>
+                    <span className="mr-2">💳</span>
+                    Pay ₹{totalPrice}
+                    <span className="ml-2">→</span>
+                  </>
+                ) : (
+                  <>
+                    <span className="mr-2">✓</span>
+                    Confirm Booking
+                    <span className="ml-2">→</span>
+                  </>
+                )}
               </span>
             )}
           </button>
         </form>
 
-        {/* Footer */}
         <div className="bg-gradient-to-r from-green-50 to-emerald-50 p-4 rounded-b-2xl border-t border-green-200">
           <p className="text-xs text-green-700 text-center flex items-center justify-center">
             <span className="mr-1">🔒</span>
-            Confirmation email will be sent to {customerData.email}
+            Secure payment powered by Razorpay
           </p>
         </div>
       </div>

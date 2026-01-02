@@ -1,6 +1,38 @@
-import React from 'react';
+import React, { useState, useEffect } from 'react';
+import { doc, getDoc } from 'firebase/firestore';
+import { db } from '../firebase';
 
 export default function SuccessModal({ bookingDetails, onClose }) {
+  const [phoneNumber, setPhoneNumber] = useState('Loading...');
+  
+  console.log('📋 Booking Details received:', bookingDetails);
+
+  // Fetch phone number from users collection
+  useEffect(() => {
+    const fetchPhoneNumber = async () => {
+      if (bookingDetails?.userId) {
+        try {
+          const userDocRef = doc(db, 'users', bookingDetails.userId);
+          const userDoc = await getDoc(userDocRef);
+          
+          if (userDoc.exists()) {
+            const userData = userDoc.data();
+            setPhoneNumber(userData.phoneNumber || 'Not provided');
+            console.log('✅ Phone number fetched:', userData.phoneNumber);
+          } else {
+            setPhoneNumber('Not provided');
+          }
+        } catch (error) {
+          console.error('❌ Error fetching phone number:', error);
+          setPhoneNumber('Not provided');
+        }
+      } else {
+        setPhoneNumber('Not provided');
+      }
+    };
+
+    fetchPhoneNumber();
+  }, [bookingDetails?.userId]);
 
   const formatDate = (dateString) => {
     if (!dateString) return 'N/A';
@@ -13,54 +45,47 @@ export default function SuccessModal({ bookingDetails, onClose }) {
         day: 'numeric'
       });
     } catch (error) {
-      console.error('Date formatting error:', error);
       return dateString;
     }
   };
 
-  const formatTime = (time) => {
-    return time || 'N/A';
+  const formatPhone = (phone) => {
+    if (!phone || phone === 'Loading...' || phone === 'Not provided') return phone;
+    const cleaned = phone.replace(/[\s+]/g, '').replace(/^91/, '');
+    return cleaned ? `+91 ${cleaned}` : 'Not provided';
   };
 
-  // Safely extract data with multiple fallback options
-  const bookingId = bookingDetails?.bookingId || bookingDetails?.id || 'N/A';
-  const customerName = bookingDetails?.customerName || bookingDetails?.name || 'Guest';
-  const customerEmail = bookingDetails?.customerEmail || bookingDetails?.email || 'N/A';
-  
-  // Try multiple date field names
-  const bookingDate = bookingDetails?.date || 
-                       bookingDetails?.ookingDate || 
-                       bookingDetails?.formattedDate || 
-                       bookingDetails?.selectedDate;
-  
-  // Safely get slots
+  // Safely extract data
+  const bookingId = bookingDetails?.id || 'N/A';
+  const customerName = bookingDetails?.customerName || 'Guest';
+  const customerEmail = bookingDetails?.customerEmail || 'N/A';
+  const bookingDate = bookingDetails?.date || bookingDetails?.formattedDate;
   const slots = Array.isArray(bookingDetails?.slots) ? bookingDetails.slots : [];
-  
-  // Calculate total amount - try multiple approaches
-  let totalAmount = 0;
-  if (bookingDetails?.totalAmount) {
-    totalAmount = bookingDetails.totalAmount;
-  } else if (slots.length > 0) {
-    totalAmount = slots.reduce((sum, slot) => sum + (Number(slot.price) || 0), 0);
-  }
+  const totalAmount = bookingDetails?.totalAmount || 0;
+  const paymentStatus = bookingDetails?.paymentStatus || 'pending';
+  const paymentMethod = bookingDetails?.paymentMethod || 'venue';
+  const paymentId = bookingDetails?.paymentId;
 
   return (
     <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-50 p-4 animate-fade-in">
       <div className="bg-white rounded-2xl max-w-md w-full shadow-2xl animate-[slideUp_0.3s_ease-out] max-h-[90vh] overflow-y-auto">
-        {/* Success Animation Header */}
+        {/* Success Header */}
         <div className="bg-gradient-to-r from-green-600 to-green-500 text-white p-8 rounded-t-2xl text-center">
           <div className="mb-4 animate-bounce">
             <div className="w-20 h-20 bg-white rounded-full flex items-center justify-center mx-auto shadow-lg">
               <span className="text-5xl text-green-600">✓</span>
             </div>
           </div>
-          <h2 className="text-3xl font-bold mb-2">Booking Confirmed!</h2>
+          <h2 className="text-3xl font-bold mb-2">
+            {paymentStatus === 'paid' ? 'Payment Successful!' : 'Booking Confirmed!'}
+          </h2>
           <p className="text-green-100 text-sm">
-            Your court has been successfully reserved
+            {paymentStatus === 'paid' 
+              ? 'Your payment was successful and booking is confirmed' 
+              : 'Your court has been successfully reserved'}
           </p>
         </div>
 
-        {/* Booking Details */}
         <div className="p-6">
           {/* Booking ID */}
           <div className="bg-gradient-to-r from-blue-50 to-cyan-50 border-2 border-blue-200 rounded-lg p-4 mb-4">
@@ -69,6 +94,17 @@ export default function SuccessModal({ bookingDetails, onClose }) {
               {bookingId}
             </div>
           </div>
+
+          {/* Payment ID (if paid online) */}
+          {paymentStatus === 'paid' && paymentId && (
+            <div className="bg-gradient-to-r from-green-50 to-emerald-50 border-2 border-green-200 rounded-lg p-4 mb-4">
+              <div className="text-xs text-green-700 font-semibold mb-1">PAYMENT ID</div>
+              <div className="text-sm font-bold text-green-900 font-mono break-all">
+                {paymentId}
+              </div>
+              <div className="text-xs text-green-600 mt-1">✓ Payment verified</div>
+            </div>
+          )}
 
           {/* Customer Info */}
           <div className="mb-4">
@@ -89,16 +125,26 @@ export default function SuccessModal({ bookingDetails, onClose }) {
                   {customerEmail}
                 </span>
               </div>
+              <div className="flex items-start">
+                <span className="text-gray-500 text-sm w-24 flex-shrink-0">Phone:</span>
+                <span className="text-gray-800 text-sm font-semibold flex-1">
+                  {phoneNumber === 'Loading...' ? (
+                    <span className="text-gray-400 italic">Loading...</span>
+                  ) : (
+                    formatPhone(phoneNumber)
+                  )}
+                </span>
+              </div>
             </div>
           </div>
 
-          {/* Date & Time */}
+          {/* Booking Details */}
           <div className="mb-4">
             <h3 className="text-sm font-bold text-gray-700 mb-3 flex items-center">
               <span className="text-lg mr-2">📅</span>
               Booking Details
             </h3>
-            <div className="bg-gradient-to-r from-green-50 to-emerald-50 border-2 border-green-200 rounded-lg p-4 mb-3">
+            <div className="bg-gradient-to-r from-green-50 to-emerald-50 border-2 border-green-200 rounded-lg p-4">
               <div className="flex items-center justify-between mb-2">
                 <span className="text-sm text-green-700">Date:</span>
                 <span className="text-sm font-bold text-green-900">
@@ -114,8 +160,8 @@ export default function SuccessModal({ bookingDetails, onClose }) {
             </div>
           </div>
 
-          {/* Selected Slots */}
-          {slots.length > 0 ? (
+          {/* Time Slots */}
+          {slots.length > 0 && (
             <div className="mb-4">
               <h3 className="text-sm font-bold text-gray-700 mb-2 flex items-center">
                 <span className="text-lg mr-2">🎾</span>
@@ -128,7 +174,7 @@ export default function SuccessModal({ bookingDetails, onClose }) {
                     className="flex justify-between items-center p-3 bg-white border-2 border-gray-200 rounded-lg"
                   >
                     <span className="text-sm font-semibold text-gray-700">
-                      {slot.time || slot.startTime || `Slot ${index + 1}`}
+                      {slot.time || `Slot ${index + 1}`}
                     </span>
                     <span className="text-sm font-bold text-gray-800">
                       ₹{slot.price || 0}
@@ -137,51 +183,81 @@ export default function SuccessModal({ bookingDetails, onClose }) {
                 ))}
               </div>
             </div>
-          ) : (
-            <div className="mb-4 p-4 bg-yellow-50 border border-yellow-200 rounded-lg">
-              <p className="text-sm text-yellow-700">No slot details available</p>
-            </div>
           )}
 
-          {/* Total Amount */}
+          {/* Payment Summary */}
           <div className="bg-gradient-to-r from-green-600 to-green-500 text-white rounded-lg p-4 mb-4">
-            <div className="flex justify-between items-center">
+            <div className="flex justify-between items-center mb-2">
               <div>
-                <div className="text-sm opacity-90 mb-1">
-                  Total Amount {bookingDetails?.paymentStatus === 'paid' ? 'Paid' : ''}
-                </div>
+                <div className="text-sm opacity-90 mb-1">Total Amount</div>
                 <div className="text-3xl font-bold">₹{totalAmount}</div>
               </div>
-              <div className="text-5xl opacity-20">💳</div>
+              <div className="text-5xl opacity-20">
+                {paymentStatus === 'paid' ? '✓' : '💳'}
+              </div>
+            </div>
+            <div className="border-t border-green-400 mt-3 pt-3">
+              <div className="flex items-center justify-between text-sm">
+                <span className="opacity-90">Payment Method:</span>
+                <span className="font-semibold">
+                  {paymentMethod === 'online' ? '💳 Online Payment' : '🏢 Pay at Venue'}
+                </span>
+              </div>
+              <div className="flex items-center justify-between text-sm mt-1">
+                <span className="opacity-90">Status:</span>
+                <span className={`font-semibold px-2 py-1 rounded ${
+                  paymentStatus === 'paid' 
+                    ? 'bg-white text-green-600' 
+                    : 'bg-green-700 text-white'
+                }`}>
+                  {paymentStatus === 'paid' ? '✓ Paid' : 'Pending'}
+                </span>
+              </div>
             </div>
           </div>
 
-          {/* Payment Status */}
-          <div className="bg-green-50 border-2 border-green-200 rounded-lg p-4 mb-4">
-            <div className="flex items-center justify-between">
-              <div className="flex items-center">
-                <span className="text-2xl mr-3">✓</span>
-                <div>
-                  <div className="text-sm font-bold text-green-900">
-                    {bookingDetails?.paymentStatus === 'paid' ? 'Payment Successful' : 'Booking Confirmed'}
-                  </div>
-                  <div className="text-xs text-green-700">
-                    {customerEmail !== 'N/A' ? `Confirmation sent to ${customerEmail}` : 'Booking confirmed successfully'}
-                  </div>
+          {/* Payment Status Message */}
+          <div className={`border-2 rounded-lg p-4 mb-4 ${
+            paymentStatus === 'paid'
+              ? 'bg-green-50 border-green-200'
+              : 'bg-yellow-50 border-yellow-200'
+          }`}>
+            <div className="flex items-center">
+              <span className="text-2xl mr-3">
+                {paymentStatus === 'paid' ? '✓' : 'ℹ️'}
+              </span>
+              <div>
+                <div className={`text-sm font-bold ${
+                  paymentStatus === 'paid' ? 'text-green-900' : 'text-yellow-900'
+                }`}>
+                  {paymentStatus === 'paid' 
+                    ? 'Payment Successful' 
+                    : 'Payment Pending'}
+                </div>
+                <div className={`text-xs ${
+                  paymentStatus === 'paid' ? 'text-green-700' : 'text-yellow-700'
+                }`}>
+                  {paymentStatus === 'paid'
+                    ? `Confirmation sent to ${customerEmail}`
+                    : 'Please pay at the venue before your slot time'}
                 </div>
               </div>
             </div>
           </div>
 
-          {/* Important Notes */}
-          <div className="bg-yellow-50 border-2 border-yellow-200 rounded-lg p-4 mb-6">
-            <h4 className="text-sm font-bold text-yellow-900 mb-2 flex items-center">
+          {/* Important Info */}
+          <div className="bg-blue-50 border-2 border-blue-200 rounded-lg p-4 mb-6">
+            <h4 className="text-sm font-bold text-blue-900 mb-2 flex items-center">
               <span className="mr-2">ℹ️</span>
               Important Information
             </h4>
-            <ul className="text-xs text-yellow-800 space-y-1">
+            <ul className="text-xs text-blue-800 space-y-1">
               <li>• Please arrive 5 minutes before your slot time</li>
-              <li>• For cancellations, contact us atleast 2 hours in advance</li>
+              {paymentStatus !== 'paid' && (
+                <li>• Bring cash/card for payment at venue</li>
+              )}
+              <li>• Bring a valid ID for verification</li>
+              <li>• For cancellations, contact us at least 2 hours in advance</li>
               <li>• Contact: +91 9096467169</li>
             </ul>
           </div>
@@ -192,31 +268,25 @@ export default function SuccessModal({ bookingDetails, onClose }) {
               onClick={onClose}
               className="w-full py-4 bg-gradient-to-r from-green-600 to-green-500 hover:from-green-700 hover:to-green-600 text-white rounded-lg font-bold shadow-lg hover:shadow-xl transition-all transform hover:scale-105"
             >
-              <span className="flex items-center justify-center">
-                Done
-                <span className="ml-2">✓</span>
-              </span>
+              Done ✓
             </button>
 
             <button
               onClick={() => window.print()}
               className="w-full py-3 bg-white border-2 border-gray-300 hover:border-green-500 hover:bg-green-50 text-gray-700 rounded-lg font-semibold transition-all"
             >
-              <span className="flex items-center justify-center">
-                <span className="mr-2">🖨️</span>
-                Print Confirmation
-              </span>
+              🖨️ Print Confirmation
             </button>
           </div>
 
-          {/* Contact Support */}
+          {/* Support */}
           <div className="mt-6 text-center">
-            <p className="text-xs text-gray-500 mb-2">Need help with your booking?</p>
+            <p className="text-xs text-gray-500 mb-2">Need help?</p>
             <a 
               href="tel:+919096467169" 
               className="text-sm text-green-600 hover:text-green-700 font-semibold"
             >
-              📞 Contact Support: +91 9096467169
+              📞 Contact: +91 9096467169
             </a>
           </div>
         </div>
