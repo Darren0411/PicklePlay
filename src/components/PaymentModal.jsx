@@ -117,6 +117,7 @@ export default function PaymentModal({
 
       const totalAmount = totalPrice;
 
+      // Create booking document first
       const bookingData = {
         userId: user.uid,
         customerName: customerData.name || user.displayName || 'Guest',
@@ -136,16 +137,43 @@ export default function PaymentModal({
       };
 
       const bookingRef = await addDoc(collection(db, 'bookings'), bookingData);
-      console.log('✅ Booking created for online payment:', bookingRef.id);
+      console.log('✅ Booking created:', bookingRef.id);
 
-      // ✅ SIMPLIFIED: Remove config - show ALL payment methods (includes UPI)
+      // ✅ Create Razorpay order via Vercel API
+      const orderResponse = await fetch('/api/create-order', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          amount: totalAmount * 100, // Convert to paise
+          currency: 'INR',
+          receipt: bookingRef.id,
+          notes: {
+            bookingId: bookingRef.id,
+            customerEmail: customerData.email || user.email,
+            date: selectedDate.toISOString(),
+          },
+        }),
+      });
+
+      const orderData = await orderResponse.json();
+
+      if (!orderData.success) {
+        throw new Error(orderData.error || 'Failed to create order');
+      }
+
+      console.log('✅ Razorpay order created:', orderData.orderId);
+
+      // ✅ Razorpay checkout options with order_id
       const options = {
         key: import.meta.env.VITE_RAZORPAY_KEY_ID,
-        amount: totalAmount * 100,
-        currency: 'INR',
+        amount: orderData.amount,
+        currency: orderData.currency,
         name: 'PicklePlay',
         description: `Court Booking - ${formatDateForDisplay(selectedDate)}`,
         image: '/favicon.svg',
+        order_id: orderData.orderId, // ✅ Use server-created order ID
         
         prefill: {
           name: customerData.name || user.displayName || 'Guest',
@@ -154,28 +182,48 @@ export default function PaymentModal({
         },
         notes: {
           bookingId: bookingRef.id,
-          date: selectedDate.toISOString(),
-          slots: selectedSlots.length,
         },
         theme: {
           color: '#16a34a',
         },
         
-        // ✅ REMOVED config - now it will show all payment methods including UPI
-        
         handler: async function (response) {
-          console.log('✅ Payment successful:', response);
+          console.log('✅ Payment response:', response);
           
           try {
+            // ✅ Verify payment via Vercel API
+            const verifyResponse = await fetch('/api/verify-payment', {
+              method: 'POST',
+              headers: {
+                'Content-Type': 'application/json',
+              },
+              body: JSON.stringify({
+                razorpay_order_id: response.razorpay_order_id,
+                razorpay_payment_id: response.razorpay_payment_id,
+                razorpay_signature: response.razorpay_signature,
+              }),
+            });
+
+            const verifyData = await verifyResponse.json();
+
+            if (!verifyData.success) {
+              throw new Error('Payment verification failed');
+            }
+
+            console.log('✅ Payment verified successfully');
+
+            // Update booking with payment details
             await updateDoc(doc(db, 'bookings', bookingRef.id), {
               paymentStatus: 'paid',
               bookingStatus: 'confirmed',
               paymentId: response.razorpay_payment_id,
-              razorpayOrderId: response.razorpay_order_id || '',
-              razorpaySignature: response.razorpay_signature || '',
+              razorpayOrderId: response.razorpay_order_id,
+              razorpaySignature: response.razorpay_signature,
               paidAt: new Date(),
+              verified: true,
             });
 
+            // Mark slots as booked
             await Promise.all(
               selectedSlots.map(slot =>
                 updateDoc(doc(db, 'slots', slot.id), { 
@@ -207,8 +255,8 @@ export default function PaymentModal({
             });
 
           } catch (error) {
-            console.error('❌ Error updating booking:', error);
-            alert('Payment successful but booking update failed. Contact support with Payment ID: ' + response.razorpay_payment_id);
+            console.error('❌ Error verifying payment:', error);
+            alert('❌ Payment verification failed. Please contact support with Payment ID: ' + response.razorpay_payment_id);
             setProcessing(false);
           }
         },
@@ -324,7 +372,7 @@ export default function PaymentModal({
 
         <form onSubmit={handlePayment} className="p-6">
           <div className="mb-6">
-            <label className="text-sm font-semibold text-gray-700 mb-3 flex items-center">
+            <label className="block text-sm font-semibold text-gray-700 mb-3 flex items-center">
               <span className="text-xl mr-2">💰</span>
               Payment Method
             </label>
