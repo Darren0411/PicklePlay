@@ -372,7 +372,7 @@ export default function PaymentModal({
 
         <form onSubmit={handlePayment} className="p-6">
           <div className="mb-6">
-            <label className="block text-sm font-semibold text-gray-700 mb-3 flex items-center">
+            <label className="block text-sm font-semibold text-gray-700 mb-3 items-center">
               <span className="text-xl mr-2">💰</span>
               Payment Method
             </label>
