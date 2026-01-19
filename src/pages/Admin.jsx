@@ -1,6 +1,6 @@
 import { useState, useEffect } from "react";
 import { initializeSlotsForDate } from "../utils/firestoreHelper";
-import { collection, query, orderBy, limit, getDocs, doc, getDoc } from "firebase/firestore";
+import { collection, query, orderBy, limit, getDocs, doc, getDoc, updateDoc, deleteDoc } from "firebase/firestore";
 import { db } from "../firebase";
 
 export default function Admin() {
@@ -27,6 +27,9 @@ export default function Admin() {
     pendingPayments: 0,
     todayBookings: 0,
   });
+  const [editingBookingId, setEditingBookingId] = useState(null);
+  const [updatingStatus, setUpdatingStatus] = useState(false);
+  const [deletingBookingId, setDeletingBookingId] = useState(null);
 
   const ADMIN_PASSWORD = import.meta.env.VITE_ADMIN_PASSWORD;
 
@@ -161,6 +164,82 @@ export default function Admin() {
 
     return matchesStatus && matchesSearch;
   });
+
+  // Update payment status in Firestore
+  const updatePaymentStatus = async (bookingId, newStatus) => {
+    setUpdatingStatus(true);
+    try {
+      const bookingRef = doc(db, "bookings", bookingId);
+      await updateDoc(bookingRef, {
+        paymentStatus: newStatus,
+        // Optionally update bookingStatus to confirmed when payment is marked as paid
+        ...(newStatus === "paid" && { bookingStatus: "confirmed" }),
+      });
+
+      // Update local state
+      setBookings((prevBookings) =>
+        prevBookings.map((booking) =>
+          booking.id === bookingId
+            ? {
+                ...booking,
+                paymentStatus: newStatus,
+                ...(newStatus === "paid" && { bookingStatus: "confirmed" }),
+              }
+            : booking
+        )
+      );
+
+      // Recalculate stats
+      const updatedBookings = bookings.map((booking) =>
+        booking.id === bookingId
+          ? {
+              ...booking,
+              paymentStatus: newStatus,
+              ...(newStatus === "paid" && { bookingStatus: "confirmed" }),
+            }
+          : booking
+      );
+      calculateStats(updatedBookings);
+
+      setEditingBookingId(null);
+      console.log("✅ Payment status updated successfully");
+    } catch (error) {
+      console.error("❌ Error updating payment status:", error);
+      alert("Failed to update payment status. Please try again.");
+    } finally {
+      setUpdatingStatus(false);
+    }
+  };
+
+  // Delete booking from Firestore
+  const deleteBooking = async (bookingId) => {
+    if (!window.confirm("Are you sure you want to delete this booking? This action cannot be undone.")) {
+      return;
+    }
+
+    setDeletingBookingId(bookingId);
+    try {
+      const bookingRef = doc(db, "bookings", bookingId);
+      await deleteDoc(bookingRef);
+
+      // Update local state
+      setBookings((prevBookings) =>
+        prevBookings.filter((booking) => booking.id !== bookingId)
+      );
+
+      // Recalculate stats
+      const updatedBookings = bookings.filter((booking) => booking.id !== bookingId);
+      calculateStats(updatedBookings);
+
+      console.log("✅ Booking deleted successfully");
+      alert("Booking deleted successfully!");
+    } catch (error) {
+      console.error("❌ Error deleting booking:", error);
+      alert("Failed to delete booking. Please try again.");
+    } finally {
+      setDeletingBookingId(null);
+    }
+  };
 
   // Fetch the last available slot date
   const fetchLastSlotDate = async () => {
@@ -586,29 +665,32 @@ export default function Admin() {
                   <table className="w-full">
                     <thead className="bg-blue-50">
                       <tr>
-                        <th className="px-6 py-4 text-left text-xs font-bold text-blue-900 uppercase tracking-wider">
+                        <th className="px-4 py-4 text-left text-xs font-bold text-blue-900 uppercase tracking-wider">
                           Booking ID
                         </th>
-                        <th className="px-6 py-4 text-left text-xs font-bold text-blue-900 uppercase tracking-wider">
+                        <th className="px-4 py-4 text-left text-xs font-bold text-blue-900 uppercase tracking-wider">
                           Customer
                         </th>
-                        <th className="px-6 py-4 text-left text-xs font-bold text-blue-900 uppercase tracking-wider">
+                        <th className="px-4 py-4 text-left text-xs font-bold text-blue-900 uppercase tracking-wider">
                           Contact
                         </th>
                         <th className="px-6 py-4 text-left text-xs font-bold text-blue-900 uppercase tracking-wider">
                           Date & Slots
                         </th>
-                        <th className="px-6 py-4 text-left text-xs font-bold text-blue-900 uppercase tracking-wider">
+                        <th className="px-4 py-4 text-left text-xs font-bold text-blue-900 uppercase tracking-wider">
                           Amount
                         </th>
-                        <th className="px-6 py-4 text-left text-xs font-bold text-blue-900 uppercase tracking-wider">
-                          Payment
+                        <th className="px-4 py-4 text-left text-xs font-bold text-blue-900 uppercase tracking-wider">
+                          Payment Method
                         </th>
-                        <th className="px-6 py-4 text-left text-xs font-bold text-blue-900 uppercase tracking-wider">
+                        <th className="px-4 py-4 text-left text-xs font-bold text-blue-900 uppercase tracking-wider">
+                          Payment Status
+                        </th>
+                        <th className="px-4 py-4 text-left text-xs font-bold text-blue-900 uppercase tracking-wider">
                           Booking Status
                         </th>
-                        <th className="px-6 py-4 text-left text-xs font-bold text-blue-900 uppercase tracking-wider">
-                          Booked At
+                        <th className="px-4 py-4 text-left text-xs font-bold text-blue-900 uppercase tracking-wider">
+                          Actions
                         </th>
                       </tr>
                     </thead>
@@ -618,12 +700,12 @@ export default function Admin() {
                           key={booking.id}
                           className="hover:bg-blue-50 transition-colors"
                         >
-                          <td className="px-6 py-4 whitespace-nowrap">
+                          <td className="px-4 py-4 whitespace-nowrap">
                             <div className="text-sm font-mono text-gray-900">
                               #{booking.id.slice(0, 8)}
                             </div>
                           </td>
-                          <td className="px-6 py-4 whitespace-nowrap">
+                          <td className="px-4 py-4 whitespace-nowrap">
                             <div className="flex items-center">
                               <div className="w-10 h-10 rounded-full bg-blue-100 flex items-center justify-center mr-3">
                                 <span className="text-blue-600 font-bold">
@@ -639,32 +721,61 @@ export default function Admin() {
                               </div>
                             </div>
                           </td>
-                          <td className="px-6 py-4 whitespace-nowrap">
+                          <td className="px-4 py-4 whitespace-nowrap">
                             <div className="text-sm text-gray-900">
                               📱 {booking.customerPhone}
                             </div>
                           </td>
-                          <td className="px-6 py-4">
-                            <div className="text-sm font-semibold text-gray-900">
+                          <td className="px-6 py-4 whitespace-nowrap">
+                            <div className="text-sm font-semibold text-gray-900 mb-1">
                               {formatDate(booking.date)}
                             </div>
-                            <div className="text-xs text-gray-500 mt-1">
+                            <div className="text-xs text-gray-500">
                               {booking.slots?.length || 0} slot(s)
                             </div>
                           </td>
-                          <td className="px-6 py-4 whitespace-nowrap">
+                          <td className="px-4 py-4 whitespace-nowrap">
                             <div className="text-sm font-bold text-gray-900">
                               ₹{booking.totalAmount}
                             </div>
                           </td>
-                          <td className="px-6 py-4 whitespace-nowrap">
+                          <td className="px-4 py-4 whitespace-nowrap">
                             <div className="text-sm text-gray-900">
                               {booking.paymentMethod === "online"
                                 ? "💳 Online"
                                 : "💵 Pay at Venue"}
                             </div>
                           </td>
-                          <td className="px-6 py-4 whitespace-nowrap">
+                          <td className="px-4 py-4 whitespace-nowrap">
+                            {editingBookingId === booking.id ? (
+                              <select
+                                value={booking.paymentStatus}
+                                onChange={(e) => {
+                                  if (
+                                    window.confirm(
+                                      `Are you sure you want to change payment status to "${e.target.value}"?`
+                                    )
+                                  ) {
+                                    updatePaymentStatus(booking.id, e.target.value);
+                                  }
+                                }}
+                                disabled={updatingStatus}
+                                className="px-3 py-1 text-xs font-semibold rounded-full border-2 border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                              >
+                                <option value="pending">Pending</option>
+                                <option value="paid">Paid</option>
+                              </select>
+                            ) : booking.paymentStatus === "paid" ? (
+                              <span className="px-3 py-1 text-xs font-semibold rounded-full bg-green-100 text-green-800">
+                                ✓ Paid
+                              </span>
+                            ) : (
+                              <span className="px-3 py-1 text-xs font-semibold rounded-full bg-yellow-100 text-yellow-800">
+                                ⏳ Pending
+                              </span>
+                            )}
+                          </td>
+                          <td className="px-4 py-4 whitespace-nowrap">
                             {booking.bookingStatus === "confirmed" ? (
                               <span className="px-3 py-1 text-xs font-semibold rounded-full bg-green-100 text-green-800">
                                 ✓ Confirmed
@@ -675,8 +786,39 @@ export default function Admin() {
                               </span>
                             )}
                           </td>
-                          <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
-                            {formatTime(booking.createdAt)}
+                          <td className="px-4 py-4 whitespace-nowrap">
+                            <div className="flex items-center gap-2">
+                              <button
+                                onClick={() => {
+                                  if (editingBookingId === booking.id) {
+                                    setEditingBookingId(null);
+                                  } else {
+                                    setEditingBookingId(booking.id);
+                                  }
+                                }}
+                                disabled={updatingStatus || deletingBookingId === booking.id}
+                                className={`px-3 py-2 rounded-lg font-semibold text-xs transition-all ${
+                                  editingBookingId === booking.id
+                                    ? "bg-gray-500 hover:bg-gray-600 text-white"
+                                    : "bg-blue-500 hover:bg-blue-600 text-white"
+                                } disabled:opacity-50 disabled:cursor-not-allowed`}
+                              >
+                                {updatingStatus && editingBookingId === booking.id
+                                  ? "Updating..."
+                                  : editingBookingId === booking.id
+                                  ? "Cancel"
+                                  : "✏️ Edit"}
+                              </button>
+                              <button
+                                onClick={() => deleteBooking(booking.id)}
+                                disabled={deletingBookingId === booking.id || updatingStatus}
+                                className="px-3 py-2 rounded-lg font-semibold text-xs bg-red-500 hover:bg-red-600 text-white transition-all disabled:opacity-50 disabled:cursor-not-allowed"
+                              >
+                                {deletingBookingId === booking.id
+                                  ? "Deleting..."
+                                  : "🗑️ Delete"}
+                              </button>
+                            </div>
                           </td>
                         </tr>
                       ))}
@@ -688,7 +830,7 @@ export default function Admin() {
           </>
         )}
 
-        {/* Slots Tab - Keep existing code */}
+        {/* Slots Tab - keeping existing code */}
         {activeTab === "slots" && (
           <>
             {/* Current Slots Info */}
