@@ -1,9 +1,12 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { doc, getDoc } from 'firebase/firestore';
 import { db } from '../firebase';
+import { sendBookingConfirmation } from '../services/emailService';
 
 export default function SuccessModal({ bookingDetails, onClose }) {
   const [phoneNumber, setPhoneNumber] = useState('Loading...');
+  const [emailStatus, setEmailStatus] = useState('sending');
+  const emailSentRef = useRef(false);
   
   console.log('📋 Booking Details received:', bookingDetails);
 
@@ -33,6 +36,36 @@ export default function SuccessModal({ bookingDetails, onClose }) {
 
     fetchPhoneNumber();
   }, [bookingDetails?.userId]);
+useEffect(() => {
+  const sendEmail = async () => {
+    if (!bookingDetails || emailSentRef.current) return;
+
+    emailSentRef.current = true;
+
+    const emailData = {
+     email: bookingDetails.customerEmail,
+      name: bookingDetails.customerName,
+      id: bookingDetails.id,
+      formattedDate: bookingDetails.formattedDate,
+      date: bookingDetails.date,
+      amount: bookingDetails.totalAmount,
+      paymentMethod: bookingDetails.paymentMethod,
+      slots: bookingDetails.slots
+    };
+
+    try {
+      console.log('📧 Sending confirmation email:', emailData);
+      await sendBookingConfirmation(emailData);
+      console.log('✅ Email sent successfully');
+      setEmailStatus('sent');
+    } catch (error) {
+      console.error('❌ Failed to send email:', error);
+    }
+  };
+
+  sendEmail();
+}, [bookingDetails]);
+
 
   const formatDate = (dateString) => {
     if (!dateString) return 'N/A';
@@ -54,6 +87,7 @@ export default function SuccessModal({ bookingDetails, onClose }) {
     const cleaned = phone.replace(/[\s+]/g, '').replace(/^91/, '');
     return cleaned ? `+91 ${cleaned}` : 'Not provided';
   };
+
 
   // Safely extract data
   const bookingId = bookingDetails?.id || 'N/A';
@@ -216,34 +250,65 @@ export default function SuccessModal({ bookingDetails, onClose }) {
             </div>
           </div>
 
-          {/* Payment Status Message */}
+          {/* Email Status */}
           <div className={`border-2 rounded-lg p-4 mb-4 ${
-            paymentStatus === 'paid'
+            emailStatus === 'sent' 
               ? 'bg-green-50 border-green-200'
-              : 'bg-yellow-50 border-yellow-200'
+              : emailStatus === 'error'
+              ? 'bg-yellow-50 border-yellow-200'
+              : 'bg-blue-50 border-blue-200'
           }`}>
             <div className="flex items-center">
               <span className="text-2xl mr-3">
-                {paymentStatus === 'paid' ? '✓' : 'ℹ️'}
+                {emailStatus === 'sent' ? '✅' : emailStatus === 'error' ? '⚠️' : '📧'}
               </span>
               <div>
                 <div className={`text-sm font-bold ${
-                  paymentStatus === 'paid' ? 'text-green-900' : 'text-yellow-900'
+                  emailStatus === 'sent' 
+                    ? 'text-green-900' 
+                    : emailStatus === 'error'
+                    ? 'text-yellow-900'
+                    : 'text-blue-900'
                 }`}>
-                  {paymentStatus === 'paid' 
-                    ? 'Payment Successful' 
-                    : 'Payment Pending'}
+                  {emailStatus === 'sent' 
+                    ? 'Confirmation Email Sent' 
+                    : emailStatus === 'error'
+                    ? 'Email Delivery Issue'
+                    : 'Sending Confirmation...'}
                 </div>
                 <div className={`text-xs ${
-                  paymentStatus === 'paid' ? 'text-green-700' : 'text-yellow-700'
+                  emailStatus === 'sent' 
+                    ? 'text-green-700' 
+                    : emailStatus === 'error'
+                    ? 'text-yellow-700'
+                    : 'text-blue-700'
                 }`}>
-                  {paymentStatus === 'paid'
+                  {emailStatus === 'sent'
                     ? `Confirmation sent to ${customerEmail}`
-                    : 'Please pay at the venue before your slot time'}
+                    : emailStatus === 'error'
+                    ? 'Booking confirmed but email failed. Check your inbox or spam folder.'
+                    : 'Please wait...'}
                 </div>
               </div>
             </div>
           </div>
+
+          {/* Payment Status Message */}
+          {paymentStatus !== 'paid' && (
+            <div className="bg-yellow-50 border-2 border-yellow-200 rounded-lg p-4 mb-4">
+              <div className="flex items-center">
+                <span className="text-2xl mr-3">ℹ️</span>
+                <div>
+                  <div className="text-sm font-bold text-yellow-900">
+                    Payment Pending
+                  </div>
+                  <div className="text-xs text-yellow-700">
+                    Please pay at the venue after your slot time
+                  </div>
+                </div>
+              </div>
+            </div>
+          )}
 
           {/* Important Info */}
           <div className="bg-blue-50 border-2 border-blue-200 rounded-lg p-4 mb-6">

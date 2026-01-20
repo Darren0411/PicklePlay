@@ -1,48 +1,40 @@
 import emailjs from '@emailjs/browser';
 
-// EmailJS Configuration
-const EMAILJS_SERVICE_ID = import.meta.env.VITE_EMAILJS_SERVICE_ID;
-const EMAILJS_TEMPLATE_ID = import.meta.env.VITE_EMAILJS_TEMPLATE_ID;
-const EMAILJS_PUBLIC_KEY = import.meta.env.VITE_EMAILJS_PUBLIC_KEY;
+const SERVICE_ID = import.meta.env.VITE_EMAILJS_SERVICE_ID;
+const TEMPLATE_ID = import.meta.env.VITE_EMAILJS_TEMPLATE_ID;
+const PUBLIC_KEY = import.meta.env.VITE_EMAILJS_PUBLIC_KEY;
 
-/**
- * Send booking confirmation email
- */
-export const sendBookingConfirmationEmail = async (bookingDetails) => {
+export const sendBookingConfirmation = async (bookingDetails) => {
   try {
-    console.log('📧 Sending confirmation email to:', bookingDetails.customerEmail);
-    console.log('📧 Booking details:', bookingDetails);
+    let formattedSlots = 'N/A';
 
-    // Format slot times
-    const slotTimes = bookingDetails.slots
-      .map(slot => slot.time)
-      .join(', ');
+    if (Array.isArray(bookingDetails.slots) && bookingDetails.slots.length > 0) {
+      formattedSlots = bookingDetails.slots.map(slot => {
+        if (slot.time) return `${slot.time} (₹${slot.price})`;
+        return `₹${slot.price}`;
+      }).join(', ');
+    }
 
-    // Prepare email parameters
     const templateParams = {
-      customerName: bookingDetails.customerName,
-      to_email: bookingDetails.customerEmail,
-      bookingId: bookingDetails.bookingId.slice(0, 8).toUpperCase(),
-      formattedDate: bookingDetails.formattedDate,
-      slotTimes: slotTimes,
-      totalPrice: bookingDetails.amount,
-      paymentMethod: bookingDetails.paymentMethod
+      to_email: bookingDetails.email,
+      booking_id: bookingDetails.id,
+      booking_date: bookingDetails.formattedDate || bookingDetails.date,
+      time_slots: formattedSlots,
+      total_amount: bookingDetails.totalAmount ?? bookingDetails.amount?.toString(),
+      payment_method:
+        bookingDetails.paymentMethod === 'online'
+          ? 'Online Payment'
+          : 'Pay at Venue'
     };
 
-    console.log('📧 Template params:', templateParams);
-
-    // Send email using EmailJS
-    const response = await emailjs.send(
-      EMAILJS_SERVICE_ID,
-      EMAILJS_TEMPLATE_ID,
+    return await emailjs.send(
+      SERVICE_ID,
+      TEMPLATE_ID,
       templateParams,
-      EMAILJS_PUBLIC_KEY
+      PUBLIC_KEY
     );
-
-    console.log('✅ Email sent successfully!', response);
-    return { success: true, response };
   } catch (error) {
-    console.error('❌ Error sending email:', error);
-    return { success: false, error };
+    console.error('EmailJS error:', error);
+    throw error;
   }
 };
