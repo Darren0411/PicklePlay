@@ -2,6 +2,11 @@ import { useState } from 'react';
 import { db, auth } from '../firebase';
 import { collection, addDoc, updateDoc, doc, deleteDoc } from 'firebase/firestore';
 
+// API URL - Change based on environment
+const API_URL = import.meta.env.DEV 
+  ? '/api'  // Development: Uses Vite proxy
+  : import.meta.env.VITE_API_URL || 'https://your-backend-url.com/api';  // Production
+
 export default function PaymentModal({ 
   customerData, 
   selectedSlots, 
@@ -139,25 +144,32 @@ export default function PaymentModal({
       const bookingRef = await addDoc(collection(db, 'bookings'), bookingData);
       console.log('✅ Booking created:', bookingRef.id);
 
-      // ✅ Create Razorpay order via Vercel API
-      const orderResponse = await fetch('/api/create-order', {
+      // Create Razorpay order via Express backend
+      console.log('📤 Creating order via backend...');
+      const orderResponse = await fetch(`${API_URL}/create-order`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
         },
         body: JSON.stringify({
-          amount: totalAmount * 100, // Convert to paise
+          amount: totalAmount * 100,
           currency: 'INR',
           receipt: bookingRef.id,
           notes: {
             bookingId: bookingRef.id,
+            customerName: customerData.name || user.displayName || 'Guest',
             customerEmail: customerData.email || user.email,
             date: selectedDate.toISOString(),
           },
         }),
       });
 
+      if (!orderResponse.ok) {
+        throw new Error(`HTTP error! status: ${orderResponse.status}`);
+      }
+
       const orderData = await orderResponse.json();
+      console.log('📦 Order response:', orderData);
 
       if (!orderData.success) {
         throw new Error(orderData.error || 'Failed to create order');
@@ -165,7 +177,7 @@ export default function PaymentModal({
 
       console.log('✅ Razorpay order created:', orderData.orderId);
 
-      // ✅ Razorpay checkout options with order_id
+      // Razorpay checkout options
       const options = {
         key: import.meta.env.VITE_RAZORPAY_KEY_ID,
         amount: orderData.amount,
@@ -173,7 +185,7 @@ export default function PaymentModal({
         name: 'PicklePlay',
         description: `Court Booking - ${formatDateForDisplay(selectedDate)}`,
         image: '/favicon.svg',
-        order_id: orderData.orderId, // ✅ Use server-created order ID
+        order_id: orderData.orderId,
         
         prefill: {
           name: customerData.name || user.displayName || 'Guest',
@@ -191,8 +203,9 @@ export default function PaymentModal({
           console.log('✅ Payment response:', response);
           
           try {
-            // ✅ Verify payment via Vercel API
-            const verifyResponse = await fetch('/api/verify-payment', {
+            // Verify payment via Express backend
+            console.log('🔍 Verifying payment...');
+            const verifyResponse = await fetch(`${API_URL}/verify-payment`, {
               method: 'POST',
               headers: {
                 'Content-Type': 'application/json',
@@ -204,7 +217,12 @@ export default function PaymentModal({
               }),
             });
 
+            if (!verifyResponse.ok) {
+              throw new Error(`HTTP error! status: ${verifyResponse.status}`);
+            }
+
             const verifyData = await verifyResponse.json();
+            console.log('🔍 Verification response:', verifyData);
 
             if (!verifyData.success) {
               throw new Error('Payment verification failed');
@@ -256,10 +274,18 @@ export default function PaymentModal({
 
           } catch (error) {
             console.error('❌ Error verifying payment:', error);
+            // Delete the pending booking
+            try {
+              await deleteDoc(doc(db, 'bookings', bookingRef.id));
+              console.log('🗑️ Deleted failed booking');
+            } catch (deleteError) {
+              console.error('Error deleting booking:', deleteError);
+            }
             alert('❌ Payment verification failed. Please contact support with Payment ID: ' + response.razorpay_payment_id);
             setProcessing(false);
           }
         },
+        
         modal: {
           ondismiss: async function () {
             console.log('❌ Payment cancelled by user');
@@ -272,11 +298,12 @@ export default function PaymentModal({
             }
             
             setProcessing(false);
-            alert('❌ Payment was cancelled. Please try again.');
+            // No alert here - payment was just cancelled, not failed
           },
         },
       };
 
+      // Check if Razorpay is loaded
       if (typeof window.Razorpay === 'undefined') {
         alert('❌ Payment gateway failed to load. Please refresh the page.');
         setProcessing(false);
@@ -284,6 +311,24 @@ export default function PaymentModal({
       }
 
       const razorpay = new window.Razorpay(options);
+      
+      // Handle payment failure (REMOVED ALERT FROM HERE)
+      razorpay.on('payment.failed', async function (response) {
+        console.error('❌ Payment failed:', response.error);
+        
+        // Delete the pending booking
+        try {
+          await deleteDoc(doc(db, 'bookings', bookingRef.id));
+          console.log('🗑️ Deleted failed booking');
+        } catch (error) {
+          console.error('Error deleting booking:', error);
+        }
+        
+        // Show single alert with error details
+        alert(`❌ Payment failed: ${response.error.description}\n\nReason: ${response.error.reason || 'Unknown'}`);
+        setProcessing(false);
+      });
+
       razorpay.open();
 
     } catch (error) {

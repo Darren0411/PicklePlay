@@ -319,11 +319,9 @@ useEffect(() => {
             <ul className="text-xs text-blue-800 space-y-1">
               <li>• Please arrive 5 minutes before your slot time</li>
               {paymentStatus !== 'paid' && (
-                <li>• Bring cash/card for payment at venue</li>
+                <li>• Bring cash or Gpay for payment at venue</li>
               )}
-              <li>• Bring a valid ID for verification</li>
               <li>• For cancellations, contact us at least 2 hours in advance</li>
-              <li>• Contact: +91 9096467169</li>
             </ul>
           </div>
 
