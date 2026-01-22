@@ -1,6 +1,6 @@
 import { useState, useEffect } from "react";
 import { initializeSlotsForDate } from "../utils/firestoreHelper";
-import { collection, query, orderBy, limit, getDocs, doc, getDoc, updateDoc, deleteDoc } from "firebase/firestore";
+import { collection, query, orderBy, limit, getDocs, doc, getDoc, updateDoc, deleteDoc, where } from "firebase/firestore";
 import { db } from "../firebase";
 
 export default function Admin() {
@@ -15,7 +15,7 @@ export default function Admin() {
   const [lastSlotDate, setLastSlotDate] = useState(null);
   const [loadingLastDate, setLoadingLastDate] = useState(false);
 
-  // New states for bookings
+  // States for bookings
   const [activeTab, setActiveTab] = useState("bookings");
   const [bookings, setBookings] = useState([]);
   const [loadingBookings, setLoadingBookings] = useState(false);
@@ -31,6 +31,12 @@ export default function Admin() {
   const [updatingStatus, setUpdatingStatus] = useState(false);
   const [deletingBookingId, setDeletingBookingId] = useState(null);
 
+  // States for slot management
+  const [selectedSlotDate, setSelectedSlotDate] = useState(new Date());
+  const [slotsForDate, setSlotsForDate] = useState([]);
+  const [loadingSlotsForDate, setLoadingSlotsForDate] = useState(false);
+  const [updatingSlot, setUpdatingSlot] = useState(null);
+
   const ADMIN_PASSWORD = import.meta.env.VITE_ADMIN_PASSWORD;
 
   useEffect(() => {
@@ -42,7 +48,95 @@ export default function Admin() {
     }
   }, []);
 
-  // Fetch all bookings - FIXED to include phone number from users collection
+  useEffect(() => {
+    if (isAuthenticated && activeTab === "manageSlots") {
+      fetchSlotsForDate();
+    }
+  }, [selectedSlotDate, isAuthenticated, activeTab]);
+
+  // Fetch slots with better error handling
+  const fetchSlotsForDate = async () => {
+    setLoadingSlotsForDate(true);
+    try {
+      const dateString = selectedSlotDate.toISOString().split('T')[0];
+      console.log("🔍 Fetching slots for date:", dateString);
+
+      const slotsQuery = query(
+        collection(db, "slots"),
+        where("date", "==", dateString)
+      );
+
+      const querySnapshot = await getDocs(slotsQuery);
+      const slotsData = querySnapshot.docs.map((doc) => ({
+        id: doc.id,
+        ...doc.data(),
+      }));
+
+      // Sort by start time
+      slotsData.sort((a, b) => {
+        const timeA = a.startTime || a.time || "";
+        const timeB = b.startTime || b.time || "";
+        return timeA.localeCompare(timeB);
+      });
+
+      setSlotsForDate(slotsData);
+      console.log(`✅ Fetched ${slotsData.length} slots for ${dateString}`, slotsData);
+    } catch (error) {
+      console.error("❌ Error fetching slots:", error);
+      setSlotsForDate([]);
+      alert(`Error fetching slots: ${error.message}`);
+    } finally {
+      setLoadingSlotsForDate(false);
+    }
+  };
+
+  // FIXED: Toggle slot availability with real-time Firestore update
+  const toggleSlotAvailability = async (slotId, currentStatus) => {
+    if (currentStatus === "booked") {
+      alert("❌ Cannot modify booked slots!");
+      return;
+    }
+
+    const newStatus = currentStatus === "available" ? "unavailable" : "available";
+    
+    if (!window.confirm(`Are you sure you want to mark this slot as ${newStatus}?`)) {
+      return;
+    }
+
+    setUpdatingSlot(slotId);
+    try {
+      console.log(`🔄 Updating slot ${slotId} from ${currentStatus} to ${newStatus}`);
+      
+      // Update in Firestore
+      const slotRef = doc(db, "slots", slotId);
+      await updateDoc(slotRef, {
+        status: newStatus,
+      });
+
+      console.log(`✅ Firestore updated successfully for slot ${slotId}`);
+
+      // Update local state immediately for real-time UI update
+      setSlotsForDate((prevSlots) =>
+        prevSlots.map((slot) =>
+          slot.id === slotId ? { ...slot, status: newStatus } : slot
+        )
+      );
+
+      // Show success message
+      const statusEmoji = newStatus === "available" ? "🟢" : "⚫";
+      alert(`${statusEmoji} Slot marked as ${newStatus} successfully!`);
+      
+    } catch (error) {
+      console.error("❌ Error updating slot:", error);
+      alert(`Failed to update slot status: ${error.message}`);
+      
+      // Refresh slots to ensure consistency
+      await fetchSlotsForDate();
+    } finally {
+      setUpdatingSlot(null);
+    }
+  };
+
   const fetchBookings = async () => {
     setLoadingBookings(true);
     try {
@@ -56,7 +150,6 @@ export default function Admin() {
       const bookingsDataPromises = querySnapshot.docs.map(async (docSnapshot) => {
         const data = docSnapshot.data();
 
-        // Calculate total amount from slots array
         let totalAmount = 0;
         if (data.slots && Array.isArray(data.slots)) {
           totalAmount = data.slots.reduce(
@@ -65,25 +158,20 @@ export default function Admin() {
           );
         }
 
-        // Handle createdAt - it might be a Timestamp, Date, or string
         let createdAtDate = new Date();
         if (data.createdAt) {
           if (typeof data.createdAt.toDate === "function") {
-            // Firestore Timestamp
             createdAtDate = data.createdAt.toDate();
           } else if (data.createdAt instanceof Date) {
-            // Already a Date object
             createdAtDate = data.createdAt;
           } else if (
             typeof data.createdAt === "string" ||
             typeof data.createdAt === "number"
           ) {
-            // String or timestamp number
             createdAtDate = new Date(data.createdAt);
           }
         }
 
-        // Fetch phone number from users collection
         let phoneNumber = "N/A";
         if (data.userId) {
           try {
@@ -117,7 +205,7 @@ export default function Admin() {
 
       setBookings(bookingsData);
       calculateStats(bookingsData);
-      console.log("✅ Fetched bookings:", bookingsData.length, bookingsData);
+      console.log("✅ Fetched bookings:", bookingsData.length);
     } catch (error) {
       console.error("❌ Error fetching bookings:", error);
       setBookings([]);
@@ -126,16 +214,13 @@ export default function Admin() {
     }
   };
 
-  // Calculate statistics
   const calculateStats = (bookingsData) => {
     const today = new Date().toISOString().split("T")[0];
 
     const stats = {
       totalBookings: bookingsData.length,
       totalRevenue: bookingsData
-        .filter(
-          (b) => b.paymentStatus === "paid" || b.bookingStatus === "confirmed"
-        )
+        .filter((b) => b.paymentStatus === "paid")
         .reduce((sum, b) => sum + (b.totalAmount || 0), 0),
       pendingPayments: bookingsData
         .filter((b) => b.paymentStatus === "pending")
@@ -146,7 +231,6 @@ export default function Admin() {
     setStats(stats);
   };
 
-  // Filter bookings
   const filteredBookings = bookings.filter((booking) => {
     const matchesStatus =
       filterStatus === "all" ||
@@ -165,18 +249,15 @@ export default function Admin() {
     return matchesStatus && matchesSearch;
   });
 
-  // Update payment status in Firestore
   const updatePaymentStatus = async (bookingId, newStatus) => {
     setUpdatingStatus(true);
     try {
       const bookingRef = doc(db, "bookings", bookingId);
       await updateDoc(bookingRef, {
         paymentStatus: newStatus,
-        // Optionally update bookingStatus to confirmed when payment is marked as paid
         ...(newStatus === "paid" && { bookingStatus: "confirmed" }),
       });
 
-      // Update local state
       setBookings((prevBookings) =>
         prevBookings.map((booking) =>
           booking.id === bookingId
@@ -189,7 +270,6 @@ export default function Admin() {
         )
       );
 
-      // Recalculate stats
       const updatedBookings = bookings.map((booking) =>
         booking.id === bookingId
           ? {
@@ -211,9 +291,12 @@ export default function Admin() {
     }
   };
 
-  // Delete booking from Firestore
   const deleteBooking = async (bookingId) => {
-    if (!window.confirm("Are you sure you want to delete this booking? This action cannot be undone.")) {
+    if (
+      !window.confirm(
+        "Are you sure you want to delete this booking? This action cannot be undone."
+      )
+    ) {
       return;
     }
 
@@ -222,13 +305,13 @@ export default function Admin() {
       const bookingRef = doc(db, "bookings", bookingId);
       await deleteDoc(bookingRef);
 
-      // Update local state
       setBookings((prevBookings) =>
         prevBookings.filter((booking) => booking.id !== bookingId)
       );
 
-      // Recalculate stats
-      const updatedBookings = bookings.filter((booking) => booking.id !== bookingId);
+      const updatedBookings = bookings.filter(
+        (booking) => booking.id !== bookingId
+      );
       calculateStats(updatedBookings);
 
       console.log("✅ Booking deleted successfully");
@@ -241,7 +324,6 @@ export default function Admin() {
     }
   };
 
-  // Fetch the last available slot date
   const fetchLastSlotDate = async () => {
     setLoadingLastDate(true);
     try {
@@ -373,7 +455,6 @@ export default function Admin() {
     }
   };
 
-  // Format date for display
   const formatDate = (dateString) => {
     if (!dateString) return "N/A";
     const date = new Date(dateString);
@@ -385,7 +466,6 @@ export default function Admin() {
     });
   };
 
-  // Format time for display
   const formatTime = (date) => {
     if (!date) return "N/A";
     return date.toLocaleString("en-US", {
@@ -399,23 +479,23 @@ export default function Admin() {
   // Password Modal
   if (!isAuthenticated) {
     return (
-      <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-50 p-4">
-        <div className="bg-white rounded-2xl shadow-2xl max-w-md w-full p-8 animate-[slideUp_0.3s_ease-out]">
+      <div className="fixed inset-0 bg-gradient-to-br from-blue-900 via-blue-800 to-blue-900 flex items-center justify-center z-50 p-4">
+        <div className="bg-white rounded-3xl shadow-2xl max-w-md w-full p-8 animate-[slideUp_0.3s_ease-out]">
           <div className="text-center mb-8">
-            <div className="w-20 h-20 bg-gradient-to-br from-blue-600 to-blue-500 rounded-full flex items-center justify-center mx-auto mb-4 shadow-lg">
-              <span className="text-4xl">🔐</span>
+            <div className="w-24 h-24 bg-gradient-to-br from-blue-600 to-blue-500 rounded-full flex items-center justify-center mx-auto mb-6 shadow-xl">
+              <span className="text-5xl">🔐</span>
             </div>
-            <h1 className="text-3xl font-bold text-blue-900 mb-2">
+            <h1 className="text-4xl font-bold bg-gradient-to-r from-blue-900 to-blue-600 bg-clip-text text-transparent mb-3">
               Admin Access
             </h1>
-            <p className="text-gray-600 text-sm">
+            <p className="text-gray-600">
               Enter the admin password to continue
             </p>
           </div>
 
           <form onSubmit={handlePasswordSubmit} className="space-y-6">
             <div>
-              <label className="block text-sm font-semibold text-gray-700 mb-2">
+              <label className="block text-sm font-semibold text-gray-700 mb-3">
                 Password
               </label>
               <div className="relative">
@@ -424,13 +504,13 @@ export default function Admin() {
                   value={password}
                   onChange={(e) => setPassword(e.target.value)}
                   placeholder="Enter admin password"
-                  className="w-full px-4 py-3 border-2 border-gray-300 rounded-lg focus:border-blue-500 focus:outline-none transition-colors"
+                  className="w-full px-5 py-4 border-2 border-gray-300 rounded-xl focus:border-blue-500 focus:outline-none transition-colors text-lg"
                   autoFocus
                 />
                 <button
                   type="button"
                   onClick={() => setShowPassword(!showPassword)}
-                  className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-500 hover:text-gray-700"
+                  className="absolute right-4 top-1/2 -translate-y-1/2 text-gray-500 hover:text-gray-700 text-xl"
                 >
                   {showPassword ? "👁️" : "👁️‍🗨️"}
                 </button>
@@ -438,24 +518,24 @@ export default function Admin() {
             </div>
 
             {error && (
-              <div className="bg-red-50 border-2 border-red-200 rounded-lg p-3 flex items-start animate-shake">
-                <span className="text-red-500 mr-2">⚠️</span>
-                <span className="text-sm text-red-700">{error}</span>
+              <div className="bg-red-50 border-2 border-red-200 rounded-xl p-4 flex items-start animate-shake">
+                <span className="text-red-500 mr-3 text-xl">⚠️</span>
+                <span className="text-sm text-red-700 font-medium">{error}</span>
               </div>
             )}
 
             <button
               type="submit"
-              className="w-full bg-gradient-to-r from-blue-600 to-blue-500 hover:from-blue-700 hover:to-blue-600 text-white font-bold py-3 rounded-lg transition-all shadow-lg hover:shadow-xl transform hover:scale-105"
+              className="w-full bg-gradient-to-r from-blue-600 to-blue-500 hover:from-blue-700 hover:to-blue-600 text-white font-bold py-4 rounded-xl transition-all shadow-lg hover:shadow-xl transform hover:scale-105"
             >
-              <span className="flex items-center justify-center">
+              <span className="flex items-center justify-center text-lg">
                 <span className="mr-2">🔓</span>
                 Access Admin Panel
               </span>
             </button>
           </form>
 
-          <div className="mt-6 p-4 bg-yellow-50 border-2 border-yellow-200 rounded-lg">
+          <div className="mt-6 p-4 bg-yellow-50 border-2 border-yellow-200 rounded-xl">
             <div className="flex items-start">
               <span className="text-yellow-600 mr-2">⚠️</span>
               <p className="text-xs text-yellow-800">
@@ -471,32 +551,33 @@ export default function Admin() {
 
   // Admin Dashboard
   return (
-    <div className="min-h-screen bg-gradient-to-br from-blue-50 via-slate-50 to-blue-50">
+    <div className="min-h-screen bg-gradient-to-br from-slate-50 via-blue-50 to-slate-50">
       {/* Header */}
-      <div className="bg-gradient-to-r from-blue-900 to-blue-700 text-white shadow-lg">
-        <div className="max-w-7xl mx-auto px-4 py-6">
+      <div className="bg-gradient-to-r from-blue-900 via-blue-800 to-blue-900 text-white shadow-2xl sticky top-0 z-50">
+        <div className="max-w-[1600px] mx-auto px-4 py-6">
           <div className="flex items-center justify-between">
-            <div className="flex items-center space-x-3">
-              <div className="text-4xl">🏓</div>
+            <div className="flex items-center space-x-4">
+              <div className="text-5xl">🏓</div>
               <div>
                 <h1 className="text-3xl font-bold">PicklePlay Admin</h1>
-                <p className="text-blue-100 text-sm mt-1">
-                  Manage bookings & court slots
+                <p className="text-blue-200 text-sm mt-1">
+                  Manage bookings, slots & revenue
                 </p>
               </div>
             </div>
             <div className="flex items-center space-x-4">
-              <div className="text-right">
-                <div className="text-sm opacity-90">Status</div>
-                <div className="font-semibold flex items-center">
-                  <span className="w-2 h-2 bg-green-300 rounded-full mr-2"></span>
-                  Authenticated
+              <div className="text-right hidden md:block">
+                <div className="text-xs text-blue-300">Admin Status</div>
+                <div className="font-semibold flex items-center justify-end">
+                  <span className="w-2 h-2 bg-green-400 rounded-full mr-2 animate-pulse"></span>
+                  Active
                 </div>
               </div>
               <button
                 onClick={handleSignOut}
-                className="bg-white/20 hover:bg-white/30 px-4 py-2 rounded-lg text-sm font-semibold transition-all"
+                className="bg-white/20 hover:bg-white/30 px-6 py-3 rounded-xl text-sm font-semibold transition-all flex items-center shadow-lg"
               >
+                <span className="mr-2">🚪</span>
                 Sign Out
               </button>
             </div>
@@ -504,30 +585,41 @@ export default function Admin() {
         </div>
       </div>
 
-      <div className="max-w-7xl mx-auto p-4 md:p-8">
+      <div className="max-w-[1600px] mx-auto p-4 md:p-8">
         {/* Tab Navigation */}
-        <div className="bg-white rounded-2xl shadow-lg p-2 mb-6 flex space-x-2">
+        <div className="bg-white rounded-2xl shadow-xl p-2 mb-8 flex space-x-2">
           <button
             onClick={() => setActiveTab("bookings")}
-            className={`flex-1 py-3 px-6 rounded-lg font-semibold transition-all ${
+            className={`flex-1 py-4 px-6 rounded-xl font-bold transition-all ${
               activeTab === "bookings"
-                ? "bg-blue-900 text-white shadow-md"
+                ? "bg-gradient-to-r from-blue-900 to-blue-700 text-white shadow-lg"
                 : "text-gray-600 hover:bg-blue-50"
             }`}
           >
-            <span className="mr-2">👥</span>
+            <span className="mr-2 text-lg">👥</span>
             User Bookings
           </button>
           <button
-            onClick={() => setActiveTab("slots")}
-            className={`flex-1 py-3 px-6 rounded-lg font-semibold transition-all ${
-              activeTab === "slots"
-                ? "bg-blue-900 text-white shadow-md"
+            onClick={() => setActiveTab("manageSlots")}
+            className={`flex-1 py-4 px-6 rounded-xl font-bold transition-all ${
+              activeTab === "manageSlots"
+                ? "bg-gradient-to-r from-blue-900 to-blue-700 text-white shadow-lg"
                 : "text-gray-600 hover:bg-blue-50"
             }`}
           >
-            <span className="mr-2">📅</span>
+            <span className="mr-2 text-lg">🎯</span>
             Manage Slots
+          </button>
+          <button
+            onClick={() => setActiveTab("slots")}
+            className={`flex-1 py-4 px-6 rounded-xl font-bold transition-all ${
+              activeTab === "slots"
+                ? "bg-gradient-to-r from-blue-900 to-blue-700 text-white shadow-lg"
+                : "text-gray-600 hover:bg-blue-50"
+            }`}
+          >
+            <span className="mr-2 text-lg">📅</span>
+            Generate Slots
           </button>
         </div>
 
@@ -535,83 +627,83 @@ export default function Admin() {
         {activeTab === "bookings" && (
           <>
             {/* Statistics Cards */}
-            <div className="grid grid-cols-1 md:grid-cols-4 gap-4 mb-6">
-              <div className="bg-gradient-to-br from-blue-600 to-blue-500 rounded-2xl p-6 text-white shadow-lg">
-                <div className="flex items-center justify-between mb-2">
-                  <span className="text-3xl">📊</span>
-                  <div className="bg-white/20 px-2 py-1 rounded text-xs">
+            <div className="grid grid-cols-1 md:grid-cols-4 gap-6 mb-8">
+              <div className="bg-gradient-to-br from-blue-600 to-blue-500 rounded-2xl p-6 text-white shadow-xl transform hover:scale-105 transition-transform">
+                <div className="flex items-center justify-between mb-3">
+                  <span className="text-4xl">📊</span>
+                  <div className="bg-white/20 px-3 py-1 rounded-lg text-xs font-semibold">
                     Total
                   </div>
                 </div>
-                <div className="text-3xl font-bold mb-1">
+                <div className="text-4xl font-bold mb-2">
                   {stats.totalBookings}
                 </div>
-                <div className="text-blue-100 text-sm">Total Bookings</div>
+                <div className="text-blue-100 text-sm font-medium">Total Bookings</div>
               </div>
 
-              <div className="bg-gradient-to-br from-green-600 to-green-500 rounded-2xl p-6 text-white shadow-lg">
-                <div className="flex items-center justify-between mb-2">
-                  <span className="text-3xl">💰</span>
-                  <div className="bg-white/20 px-2 py-1 rounded text-xs">
+              <div className="bg-gradient-to-br from-green-600 to-green-500 rounded-2xl p-6 text-white shadow-xl transform hover:scale-105 transition-transform">
+                <div className="flex items-center justify-between mb-3">
+                  <span className="text-4xl">💰</span>
+                  <div className="bg-white/20 px-3 py-1 rounded-lg text-xs font-semibold">
                     Paid
                   </div>
                 </div>
-                <div className="text-3xl font-bold mb-1">
+                <div className="text-4xl font-bold mb-2">
                   ₹{stats.totalRevenue}
                 </div>
-                <div className="text-green-100 text-sm">Total Revenue</div>
+                <div className="text-green-100 text-sm font-medium">Total Revenue</div>
               </div>
 
-              <div className="bg-gradient-to-br from-yellow-600 to-yellow-500 rounded-2xl p-6 text-white shadow-lg">
-                <div className="flex items-center justify-between mb-2">
-                  <span className="text-3xl">⏳</span>
-                  <div className="bg-white/20 px-2 py-1 rounded text-xs">
+              <div className="bg-gradient-to-br from-orange-600 to-orange-500 rounded-2xl p-6 text-white shadow-xl transform hover:scale-105 transition-transform">
+                <div className="flex items-center justify-between mb-3">
+                  <span className="text-4xl">⏳</span>
+                  <div className="bg-white/20 px-3 py-1 rounded-lg text-xs font-semibold">
                     Pending
                   </div>
                 </div>
-                <div className="text-3xl font-bold mb-1">
+                <div className="text-4xl font-bold mb-2">
                   ₹{stats.pendingPayments}
                 </div>
-                <div className="text-yellow-100 text-sm">Pending Payments</div>
+                <div className="text-orange-100 text-sm font-medium">Pending Payments</div>
               </div>
 
-              <div className="bg-gradient-to-br from-purple-600 to-purple-500 rounded-2xl p-6 text-white shadow-lg">
-                <div className="flex items-center justify-between mb-2">
-                  <span className="text-3xl">📅</span>
-                  <div className="bg-white/20 px-2 py-1 rounded text-xs">
+              <div className="bg-gradient-to-br from-purple-600 to-purple-500 rounded-2xl p-6 text-white shadow-xl transform hover:scale-105 transition-transform">
+                <div className="flex items-center justify-between mb-3">
+                  <span className="text-4xl">📅</span>
+                  <div className="bg-white/20 px-3 py-1 rounded-lg text-xs font-semibold">
                     Today
                   </div>
                 </div>
-                <div className="text-3xl font-bold mb-1">
+                <div className="text-4xl font-bold mb-2">
                   {stats.todayBookings}
                 </div>
-                <div className="text-purple-100 text-sm">Today's Bookings</div>
+                <div className="text-purple-100 text-sm font-medium">Today's Bookings</div>
               </div>
             </div>
 
             {/* Filters & Search */}
-            <div className="bg-white rounded-2xl shadow-lg p-6 mb-6">
+            <div className="bg-white rounded-2xl shadow-xl p-6 mb-8">
               <div className="flex flex-col md:flex-row gap-4">
                 <div className="flex-1">
-                  <label className="block text-sm font-semibold text-gray-700 mb-2">
-                    Search Bookings
+                  <label className="block text-sm font-bold text-gray-700 mb-3">
+                    🔍 Search Bookings
                   </label>
                   <input
                     type="text"
                     value={searchTerm}
                     onChange={(e) => setSearchTerm(e.target.value)}
                     placeholder="Search by name, email, phone, or booking ID..."
-                    className="w-full px-4 py-3 border-2 border-gray-300 rounded-lg focus:border-blue-500 focus:outline-none"
+                    className="w-full px-5 py-4 border-2 border-gray-300 rounded-xl focus:border-blue-500 focus:outline-none transition-all text-sm"
                   />
                 </div>
                 <div className="md:w-64">
-                  <label className="block text-sm font-semibold text-gray-700 mb-2">
-                    Booking Status
+                  <label className="block text-sm font-bold text-gray-700 mb-3">
+                    🎯 Filter Status
                   </label>
                   <select
                     value={filterStatus}
                     onChange={(e) => setFilterStatus(e.target.value)}
-                    className="w-full px-4 py-3 border-2 border-gray-300 rounded-lg focus:border-blue-500 focus:outline-none"
+                    className="w-full px-5 py-4 border-2 border-gray-300 rounded-xl focus:border-blue-500 focus:outline-none transition-all text-sm"
                   >
                     <option value="all">All Bookings</option>
                     <option value="confirmed">Confirmed Only</option>
@@ -621,7 +713,7 @@ export default function Admin() {
                 <div className="flex items-end">
                   <button
                     onClick={fetchBookings}
-                    className="px-6 py-3 bg-blue-900 text-white rounded-lg font-semibold hover:bg-blue-800 transition-all"
+                    className="px-8 py-4 bg-gradient-to-r from-blue-900 to-blue-700 text-white rounded-xl font-bold hover:from-blue-800 hover:to-blue-600 transition-all shadow-lg"
                   >
                     🔄 Refresh
                   </button>
@@ -630,31 +722,31 @@ export default function Admin() {
             </div>
 
             {/* Bookings Table */}
-            <div className="bg-white rounded-2xl shadow-lg overflow-hidden">
-              <div className="p-6 border-b border-gray-200">
+            <div className="bg-white rounded-2xl shadow-xl overflow-hidden">
+              <div className="p-6 border-b border-gray-200 bg-gradient-to-r from-blue-50 to-blue-100">
                 <div className="flex items-center justify-between">
-                  <h2 className="text-xl font-bold text-blue-900">
-                    Booking Details ({filteredBookings.length})
+                  <h2 className="text-2xl font-bold text-blue-900 flex items-center">
+                    <span className="mr-3 text-3xl">📋</span>
+                    Booking Details
                   </h2>
-                  <span className="text-sm text-gray-500">
-                    Showing {filteredBookings.length} of {bookings.length}{" "}
-                    bookings
+                  <span className="text-sm text-gray-600 bg-white px-4 py-2 rounded-lg shadow">
+                    Showing <strong>{filteredBookings.length}</strong> of <strong>{bookings.length}</strong> bookings
                   </span>
                 </div>
               </div>
 
               {loadingBookings ? (
-                <div className="text-center py-12">
-                  <div className="animate-spin text-4xl mb-4">🎾</div>
-                  <p className="text-gray-600">Loading bookings...</p>
+                <div className="text-center py-16">
+                  <div className="animate-spin text-6xl mb-6">🎾</div>
+                  <p className="text-gray-600 text-lg font-medium">Loading bookings...</p>
                 </div>
               ) : filteredBookings.length === 0 ? (
-                <div className="text-center py-12">
-                  <div className="text-6xl mb-4">📭</div>
-                  <p className="text-gray-600 text-lg font-semibold">
+                <div className="text-center py-16">
+                  <div className="text-8xl mb-6">📭</div>
+                  <p className="text-gray-600 text-xl font-bold mb-2">
                     No bookings found
                   </p>
-                  <p className="text-gray-500 text-sm mt-2">
+                  <p className="text-gray-500 text-sm">
                     {searchTerm || filterStatus !== "all"
                       ? "Try adjusting your filters"
                       : "Bookings will appear here once customers make reservations"}
@@ -662,88 +754,96 @@ export default function Admin() {
                 </div>
               ) : (
                 <div className="overflow-x-auto">
-                  <table className="w-full">
-                    <thead className="bg-blue-50">
+                  <table className="w-full min-w-[1400px]">
+                    <thead className="bg-gradient-to-r from-blue-900 to-blue-800 text-white">
                       <tr>
-                        <th className="px-4 py-4 text-left text-xs font-bold text-blue-900 uppercase tracking-wider">
+                        <th className="px-4 py-4 text-left text-xs font-bold uppercase tracking-wider w-[100px]">
                           Booking ID
                         </th>
-                        <th className="px-4 py-4 text-left text-xs font-bold text-blue-900 uppercase tracking-wider">
+                        <th className="px-4 py-4 text-left text-xs font-bold uppercase tracking-wider w-[200px]">
                           Customer
                         </th>
-                        <th className="px-4 py-4 text-left text-xs font-bold text-blue-900 uppercase tracking-wider">
+                        <th className="px-4 py-4 text-left text-xs font-bold uppercase tracking-wider w-[140px]">
                           Contact
                         </th>
-                        <th className="px-6 py-4 text-left text-xs font-bold text-blue-900 uppercase tracking-wider">
-                          Date & Slots
+                        <th className="px-4 py-4 text-left text-xs font-bold uppercase tracking-wider w-[220px]">
+                          Date & Time Slots
                         </th>
-                        <th className="px-4 py-4 text-left text-xs font-bold text-blue-900 uppercase tracking-wider">
+                        <th className="px-4 py-4 text-left text-xs font-bold uppercase tracking-wider w-[100px]">
                           Amount
                         </th>
-                        <th className="px-4 py-4 text-left text-xs font-bold text-blue-900 uppercase tracking-wider">
-                          Payment Method
+                        <th className="px-4 py-4 text-left text-xs font-bold uppercase tracking-wider w-[120px]">
+                          Payment
                         </th>
-                        <th className="px-4 py-4 text-left text-xs font-bold text-blue-900 uppercase tracking-wider">
-                          Payment Status
+                        <th className="px-4 py-4 text-left text-xs font-bold uppercase tracking-wider w-[120px]">
+                          Status
                         </th>
-                        <th className="px-4 py-4 text-left text-xs font-bold text-blue-900 uppercase tracking-wider">
-                          Booking Status
-                        </th>
-                        <th className="px-4 py-4 text-left text-xs font-bold text-blue-900 uppercase tracking-wider">
+                        <th className="px-4 py-4 text-left text-xs font-bold uppercase tracking-wider w-[200px]">
                           Actions
                         </th>
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-gray-200">
-                      {filteredBookings.map((booking) => (
+                      {filteredBookings.map((booking, index) => (
                         <tr
                           key={booking.id}
-                          className="hover:bg-blue-50 transition-colors"
+                          className={`hover:bg-blue-50 transition-colors ${
+                            index % 2 === 0 ? 'bg-white' : 'bg-gray-50'
+                          }`}
                         >
                           <td className="px-4 py-4 whitespace-nowrap">
-                            <div className="text-sm font-mono text-gray-900">
+                            <div className="text-xs font-mono bg-gray-100 px-2 py-1 rounded">
                               #{booking.id.slice(0, 8)}
                             </div>
                           </td>
-                          <td className="px-4 py-4 whitespace-nowrap">
+                          <td className="px-4 py-4">
                             <div className="flex items-center">
-                              <div className="w-10 h-10 rounded-full bg-blue-100 flex items-center justify-center mr-3">
-                                <span className="text-blue-600 font-bold">
-                                  {booking.customerName
-                                    ?.charAt(0)
-                                    .toUpperCase()}
+                              <div className="w-10 h-10 rounded-full bg-gradient-to-br from-blue-500 to-blue-600 flex items-center justify-center mr-3 shadow-md flex-shrink-0">
+                                <span className="text-white font-bold">
+                                  {booking.customerName?.charAt(0).toUpperCase()}
                                 </span>
                               </div>
-                              <div>
-                                <div className="text-sm font-semibold text-gray-900">
+                              <div className="min-w-0">
+                                <div className="text-sm font-bold text-gray-900 truncate">
                                   {booking.customerName}
+                                </div>
+                                <div className="text-xs text-gray-500 truncate">
+                                  {booking.customerEmail}
                                 </div>
                               </div>
                             </div>
                           </td>
                           <td className="px-4 py-4 whitespace-nowrap">
-                            <div className="text-sm text-gray-900">
+                            <div className="text-xs text-gray-900 bg-gray-100 px-2 py-1 rounded inline-block">
                               📱 {booking.customerPhone}
                             </div>
                           </td>
-                          <td className="px-6 py-4 whitespace-nowrap">
-                            <div className="text-sm font-semibold text-gray-900 mb-1">
+                          <td className="px-4 py-4">
+                            <div className="text-sm font-bold text-gray-900 mb-2">
                               {formatDate(booking.date)}
                             </div>
-                            <div className="text-xs text-gray-500">
-                              {booking.slots?.length || 0} slot(s)
+                            {/* slots with slot number and time */}
+                            <div className="space-y-1">
+                              {booking.slots?.map((slot, idx) => (
+                                <div key={idx} className="text-xs bg-blue-100 text-blue-800 px-2 py-1 rounded font-semibold flex items-center">
+                                  <span className="text-blue-600 font-bold mr-1">Slot {idx + 1} Time:</span>
+                                  <span>{slot.time || slot.displayTime || `${slot.startTime}-${slot.endTime}`}</span>
+                                </div>
+                              ))}
                             </div>
                           </td>
                           <td className="px-4 py-4 whitespace-nowrap">
-                            <div className="text-sm font-bold text-gray-900">
+                            <div className="text-lg font-bold text-green-600">
                               ₹{booking.totalAmount}
                             </div>
                           </td>
                           <td className="px-4 py-4 whitespace-nowrap">
-                            <div className="text-sm text-gray-900">
-                              {booking.paymentMethod === "online"
-                                ? "💳 Online"
-                                : "💵 Pay at Venue"}
+                            <div className={`text-xs font-semibold px-2 py-1 rounded inline-block ${
+                              booking.paymentMethod === "online"
+                                ? "bg-blue-100 text-blue-800"
+                                : "bg-purple-100 text-purple-800"
+                            }`}>
+                              {booking.paymentMethod === "online" ? "💳 Online" : "💵 Venue"}
                             </div>
                           </td>
                           <td className="px-4 py-4 whitespace-nowrap">
@@ -753,35 +853,24 @@ export default function Admin() {
                                 onChange={(e) => {
                                   if (
                                     window.confirm(
-                                      `Are you sure you want to change payment status to "${e.target.value}"?`
+                                      `Change payment status to "${e.target.value}"?`
                                     )
                                   ) {
                                     updatePaymentStatus(booking.id, e.target.value);
                                   }
                                 }}
                                 disabled={updatingStatus}
-                                className="px-3 py-1 text-xs font-semibold rounded-full border-2 border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                                className="px-3 py-1 text-xs font-bold rounded border-2 border-blue-500 focus:outline-none"
                               >
-                                <option value="pending">Pending</option>
-                                <option value="paid">Paid</option>
+                                <option value="pending">⏳ Pending</option>
+                                <option value="paid">✓ Paid</option>
                               </select>
                             ) : booking.paymentStatus === "paid" ? (
-                              <span className="px-3 py-1 text-xs font-semibold rounded-full bg-green-100 text-green-800">
+                              <span className="px-3 py-1 text-xs font-bold rounded bg-green-100 text-green-800 inline-block">
                                 ✓ Paid
                               </span>
                             ) : (
-                              <span className="px-3 py-1 text-xs font-semibold rounded-full bg-yellow-100 text-yellow-800">
-                                ⏳ Pending
-                              </span>
-                            )}
-                          </td>
-                          <td className="px-4 py-4 whitespace-nowrap">
-                            {booking.bookingStatus === "confirmed" ? (
-                              <span className="px-3 py-1 text-xs font-semibold rounded-full bg-green-100 text-green-800">
-                                ✓ Confirmed
-                              </span>
-                            ) : (
-                              <span className="px-3 py-1 text-xs font-semibold rounded-full bg-yellow-100 text-yellow-800">
+                              <span className="px-3 py-1 text-xs font-bold rounded bg-yellow-100 text-yellow-800 inline-block">
                                 ⏳ Pending
                               </span>
                             )}
@@ -797,26 +886,20 @@ export default function Admin() {
                                   }
                                 }}
                                 disabled={updatingStatus || deletingBookingId === booking.id}
-                                className={`px-3 py-2 rounded-lg font-semibold text-xs transition-all ${
+                                className={`px-3 py-1 rounded text-xs font-bold transition-all ${
                                   editingBookingId === booking.id
                                     ? "bg-gray-500 hover:bg-gray-600 text-white"
                                     : "bg-blue-500 hover:bg-blue-600 text-white"
-                                } disabled:opacity-50 disabled:cursor-not-allowed`}
+                                } disabled:opacity-50`}
                               >
-                                {updatingStatus && editingBookingId === booking.id
-                                  ? "Updating..."
-                                  : editingBookingId === booking.id
-                                  ? "Cancel"
-                                  : "✏️ Edit"}
+                                {editingBookingId === booking.id ? "Cancel" : "✏️ Edit"}
                               </button>
                               <button
                                 onClick={() => deleteBooking(booking.id)}
                                 disabled={deletingBookingId === booking.id || updatingStatus}
-                                className="px-3 py-2 rounded-lg font-semibold text-xs bg-red-500 hover:bg-red-600 text-white transition-all disabled:opacity-50 disabled:cursor-not-allowed"
+                                className="px-3 py-1 rounded text-xs font-bold bg-red-500 hover:bg-red-600 text-white transition-all disabled:opacity-50"
                               >
-                                {deletingBookingId === booking.id
-                                  ? "Deleting..."
-                                  : "🗑️ Delete"}
+                                {deletingBookingId === booking.id ? "..." : "🗑️"}
                               </button>
                             </div>
                           </td>
@@ -830,34 +913,177 @@ export default function Admin() {
           </>
         )}
 
-        {/* Slots Tab - keeping existing code */}
+        {/* Manage Slots Tab */}
+        {activeTab === "manageSlots" && (
+          <>
+            <div className="bg-white rounded-2xl shadow-xl p-8 mb-8">
+              <div className="flex items-center mb-6">
+                <span className="text-4xl mr-4">🎯</span>
+                <div>
+                  <h2 className="text-3xl font-bold text-blue-900">
+                    Manage Slot Availability
+                  </h2>
+                  <p className="text-gray-600 mt-1">
+                    Mark slots as available or unavailable for bookings
+                  </p>
+                </div>
+              </div>
+
+              <div className="mb-8">
+                <label className="block text-sm font-bold text-gray-700 mb-3">
+                  📅 Select Date
+                </label>
+                <input
+                  type="date"
+                  value={selectedSlotDate.toISOString().split('T')[0]}
+                  onChange={(e) => setSelectedSlotDate(new Date(e.target.value))}
+                  className="px-5 py-4 border-2 border-gray-300 rounded-xl focus:border-blue-500 focus:outline-none transition-all text-lg font-semibold"
+                />
+                <p className="text-sm text-gray-500 mt-3 bg-blue-50 p-3 rounded-lg">
+                  Viewing slots for: <strong>{formatDate(selectedSlotDate.toISOString())}</strong>
+                </p>
+              </div>
+
+              {loadingSlotsForDate ? (
+                <div className="text-center py-16">
+                  <div className="animate-spin text-6xl mb-6">⏳</div>
+                  <p className="text-gray-600 text-lg font-medium">Loading slots...</p>
+                </div>
+              ) : slotsForDate.length === 0 ? (
+                <div className="text-center py-16 bg-gray-50 rounded-2xl">
+                  <div className="text-8xl mb-6">📭</div>
+                  <p className="text-gray-600 text-xl font-bold mb-2">
+                    No slots found for this date
+                  </p>
+                  <p className="text-gray-500 text-sm mb-4">
+                    The selected date: <strong>{selectedSlotDate.toISOString().split('T')[0]}</strong>
+                  </p>
+                  <p className="text-gray-500 text-sm">
+                    Generate slots first or select a different date
+                  </p>
+                </div>
+              ) : (
+                <div className="space-y-4">
+                  {slotsForDate.map((slot) => (
+                    <div
+                      key={slot.id}
+                      className={`flex items-center justify-between p-6 rounded-xl border-2 transition-all ${
+                        slot.status === 'booked'
+                          ? 'bg-red-50 border-red-300'
+                          : slot.status === 'unavailable'
+                          ? 'bg-gray-100 border-gray-400'
+                          : 'bg-green-50 border-green-300'
+                      }`}
+                    >
+                      <div className="flex items-center space-x-6">
+                        <div className="text-4xl">
+                          {slot.status === 'booked' ? '🔴' : slot.status === 'unavailable' ? '⚫' : '🟢'}
+                        </div>
+                        <div>
+                          <div className="font-bold text-xl text-gray-900 mb-1">
+                            {slot.time || slot.displayTime || `${slot.startTime} - ${slot.endTime}`}
+                          </div>
+                          <div className="text-sm text-gray-600">
+                            <span className="bg-white px-3 py-1 rounded-lg font-semibold mr-2">₹{slot.price}</span>
+                            <span className={`px-3 py-1 rounded-lg font-bold ${
+                              slot.status === 'booked'
+                                ? 'bg-red-100 text-red-800'
+                                : slot.status === 'unavailable'
+                                ? 'bg-gray-200 text-gray-800'
+                                : 'bg-green-100 text-green-800'
+                            }`}>
+                              {slot.status?.toUpperCase() || 'UNKNOWN'}
+                            </span>
+                          </div>
+                        </div>
+                      </div>
+
+                      <button
+                        onClick={() => toggleSlotAvailability(slot.id, slot.status)}
+                        disabled={slot.status === 'booked' || updatingSlot === slot.id}
+                        className={`px-8 py-4 rounded-xl font-bold text-lg transition-all shadow-lg ${
+                          slot.status === 'booked'
+                            ? 'bg-gray-300 text-gray-500 cursor-not-allowed'
+                            : updatingSlot === slot.id
+                            ? 'bg-gray-400 text-white cursor-wait'
+                            : slot.status === 'unavailable'
+                            ? 'bg-green-600 text-white hover:bg-green-700'
+                            : 'bg-red-600 text-white hover:bg-red-700'
+                        }`}
+                      >
+                        {updatingSlot === slot.id ? (
+                          <span className="flex items-center">
+                            <span className="animate-spin mr-2">⏳</span>
+                            Updating...
+                          </span>
+                        ) : slot.status === 'booked' ? (
+                          '🔒 Booked'
+                        ) : slot.status === 'unavailable' ? (
+                          '✓ Make Available'
+                        ) : (
+                          '✕ Make Unavailable'
+                        )}
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+
+            {/* Info Card */}
+            <div className="bg-gradient-to-r from-blue-50 to-cyan-50 border-2 border-blue-200 rounded-2xl p-6">
+              <h3 className="font-bold text-blue-900 mb-4 flex items-center text-xl">
+                <span className="mr-3 text-2xl">ℹ️</span>
+                Important Notes
+              </h3>
+              <ul className="text-sm text-blue-800 space-y-3">
+                <li className="flex items-start">
+                  <span className="mr-3 text-lg">🟢</span>
+                  <span><strong>Available:</strong> Customers can book this slot</span>
+                </li>
+                <li className="flex items-start">
+                  <span className="mr-3 text-lg">⚫</span>
+                  <span><strong>Unavailable:</strong> Slot is hidden from booking page</span>
+                </li>
+                <li className="flex items-start">
+                  <span className="mr-3 text-lg">🔴</span>
+                  <span><strong>Booked:</strong> Cannot be modified (already booked by customer)</span>
+                </li>
+                <li className="flex items-start">
+                  <span className="mr-3 text-lg">⚠️</span>
+                  <span>Use "Make Unavailable" for maintenance, holidays, or private events</span>
+                </li>
+              </ul>
+            </div>
+          </>
+        )}
+
+        {/* Generate Slots Tab - Keep all existing code */}
         {activeTab === "slots" && (
           <>
             {/* Current Slots Info */}
-            <div className="bg-white rounded-2xl shadow-xl p-6 mb-6">
-              <div className="flex items-center mb-4">
-                <span className="text-2xl mr-3">📊</span>
-                <h2 className="text-xl font-bold text-blue-900">
+            <div className="bg-white rounded-2xl shadow-xl p-8 mb-8">
+              <div className="flex items-center mb-6">
+                <span className="text-4xl mr-4">📊</span>
+                <h2 className="text-3xl font-bold text-blue-900">
                   Current Slots Status
                 </h2>
               </div>
 
               {loadingLastDate ? (
-                <div className="flex items-center justify-center py-4">
-                  <span className="animate-spin text-2xl mr-2">⏳</span>
-                  <span className="text-gray-600">
-                    Checking existing slots...
-                  </span>
+                <div className="flex items-center justify-center py-8">
+                  <span className="animate-spin text-4xl mr-3">⏳</span>
+                  <span className="text-gray-600 text-lg">Checking existing slots...</span>
                 </div>
               ) : lastSlotDate ? (
-                <div className="bg-gradient-to-r from-blue-50 to-cyan-50 border-2 border-blue-200 rounded-lg p-4">
+                <div className="bg-gradient-to-r from-blue-50 to-cyan-50 border-2 border-blue-300 rounded-2xl p-6">
                   <div className="flex items-start">
-                    <span className="text-3xl mr-3">📅</span>
+                    <span className="text-5xl mr-4">📅</span>
                     <div>
-                      <h3 className="font-bold text-blue-900 mb-1">
+                      <h3 className="font-bold text-blue-900 mb-2 text-xl">
                         Slots Available Until
                       </h3>
-                      <p className="text-2xl font-bold text-blue-700">
+                      <p className="text-3xl font-bold text-blue-700 mb-3">
                         {lastSlotDate.toLocaleDateString("en-US", {
                           weekday: "long",
                           month: "long",
@@ -865,12 +1091,10 @@ export default function Admin() {
                           year: "numeric",
                         })}
                       </p>
-                      <p className="text-sm text-blue-600 mt-2">
-                        Next generation will start from{" "}
+                      <p className="text-sm text-blue-600 bg-white px-4 py-2 rounded-lg inline-block">
+                        Next generation starts from{" "}
                         <strong>
-                          {new Date(
-                            lastSlotDate.getTime() + 86400000
-                          ).toLocaleDateString("en-US", {
+                          {new Date(lastSlotDate.getTime() + 86400000).toLocaleDateString("en-US", {
                             month: "short",
                             day: "numeric",
                             year: "numeric",
@@ -881,16 +1105,15 @@ export default function Admin() {
                   </div>
                 </div>
               ) : (
-                <div className="bg-yellow-50 border-2 border-yellow-200 rounded-lg p-4">
+                <div className="bg-yellow-50 border-2 border-yellow-300 rounded-2xl p-6">
                   <div className="flex items-start">
-                    <span className="text-3xl mr-3">📭</span>
+                    <span className="text-5xl mr-4">📭</span>
                     <div>
-                      <h3 className="font-bold text-yellow-900 mb-1">
+                      <h3 className="font-bold text-yellow-900 mb-2 text-xl">
                         No Existing Slots
                       </h3>
                       <p className="text-sm text-yellow-700">
-                        No slots found in the system. Generation will start from
-                        today.
+                        No slots found in the system. Generation will start from today.
                       </p>
                     </div>
                   </div>
@@ -898,7 +1121,7 @@ export default function Admin() {
               )}
             </div>
 
-            {/* Slot Generation Card */}
+            {/* Slot Generation Section - Keep all existing code */}
             <div className="bg-white rounded-2xl shadow-xl p-6 mb-6">
               <div className="flex items-center mb-6">
                 <span className="text-3xl mr-3">📅</span>
@@ -912,7 +1135,6 @@ export default function Admin() {
                 </div>
               </div>
 
-              {/* Days Selection */}
               <div className="mb-6">
                 <label className="block text-sm font-semibold text-gray-700 mb-3">
                   Select Duration
@@ -935,7 +1157,6 @@ export default function Admin() {
                 </div>
               </div>
 
-              {/* Info Box */}
               <div className="bg-gradient-to-r from-blue-50 to-cyan-50 border-2 border-blue-200 rounded-lg p-4 mb-6">
                 <h3 className="font-bold text-blue-900 mb-3 flex items-center">
                   <span className="mr-2">ℹ️</span>
@@ -975,8 +1196,7 @@ export default function Admin() {
                   <li className="flex items-start">
                     <span className="mr-2">•</span>
                     <span>
-                      Each day gets <strong>13 time slots</strong> (8:00 AM -
-                      9:00 PM)
+                      Each day gets <strong>13 time slots</strong> (8:00 AM - 9:00 PM)
                     </span>
                   </li>
                   <li className="flex items-start">
@@ -994,7 +1214,6 @@ export default function Admin() {
                 </ul>
               </div>
 
-              {/* Generate Button */}
               {!result && (
                 <button
                   onClick={generateSlots}
@@ -1019,7 +1238,6 @@ export default function Admin() {
                 </button>
               )}
 
-              {/* Progress */}
               {progress && (
                 <div className="mt-4 p-4 bg-blue-50 border-2 border-blue-200 rounded-lg">
                   <div className="flex items-center">
@@ -1031,7 +1249,6 @@ export default function Admin() {
                 </div>
               )}
 
-              {/* Success Result */}
               {result && result.success && (
                 <div className="mt-4 space-y-4">
                   <div className="bg-gradient-to-r from-green-50 to-emerald-50 border-2 border-green-300 rounded-lg p-6">
@@ -1106,7 +1323,6 @@ export default function Admin() {
                 </div>
               )}
 
-              {/* Error Result */}
               {result && !result.success && (
                 <div className="mt-4 bg-red-50 border-2 border-red-200 rounded-lg p-6">
                   <div className="flex items-start">
@@ -1130,7 +1346,6 @@ export default function Admin() {
               )}
             </div>
 
-            {/* Instructions Card */}
             <div className="bg-white rounded-2xl shadow-xl p-6">
               <div className="flex items-center mb-4">
                 <span className="text-2xl mr-3">📖</span>
