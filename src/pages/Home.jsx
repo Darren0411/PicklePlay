@@ -1,8 +1,8 @@
 import React, { useState, useEffect } from "react";
-import { useNavigate } from 'react-router-dom';
+import { useNavigate } from "react-router-dom";
 
 export default function Home() {
-    const navigate = useNavigate();
+  const navigate = useNavigate();
   const [currentImage, setCurrentImage] = useState(0);
   const images = [
     { src: "/court-1.jpg", alt: "Professional Pickleball Court" },
@@ -84,7 +84,10 @@ export default function Home() {
                 >
                   View Available Slots
                 </button>
-                <button className="border-2 border-white text-white px-8 py-4 rounded-full font-bold text-lg hover:bg-white/10 transition-all">
+                <button
+                  onClick={() => navigate("/learn-more")}
+                  className="border-2 border-white text-white px-8 py-4 rounded-full font-bold text-lg hover:bg-white/10 transition-all"
+                >
                   Learn More
                 </button>
               </div>
