@@ -1,13 +1,13 @@
-import React, { useState, useRef, useEffect } from 'react';
+import { useState, useRef, useEffect } from 'react';
+import { useNavigate } from 'react-router-dom';
 import Calendar from '../components/Calendar';
 import CustomerDetailsModal from '../components/CustomerDetailsModal';
 import PaymentModal from '../components/PaymentModal';
 import SuccessModal from '../components/SuccessModal';
 import { getSlotsForDate } from '../utils/firestoreHelper';
-import { collection, addDoc, updateDoc, doc, deleteDoc } from 'firebase/firestore';
-import { db, auth } from '../firebase';
 
 export default function Booking() {
+  const navigate = useNavigate();
   const [selectedDate, setSelectedDate] = useState(new Date());
   const [selectedSlots, setSelectedSlots] = useState([]);
   const [showDatePicker, setShowDatePicker] = useState(false);
@@ -23,6 +23,14 @@ export default function Booking() {
   const [showSuccessModal, setShowSuccessModal] = useState(false);
   const [customerData, setCustomerData] = useState(null);
   const [bookingResult, setBookingResult] = useState(null);
+
+  // FIXED: Format date string without timezone issues
+  const formatDateString = (date) => {
+    const year = date.getFullYear();
+    const month = String(date.getMonth() + 1).padStart(2, '0');
+    const day = String(date.getDate()).padStart(2, '0');
+    return `${year}-${month}-${day}`;
+  };
 
   // Generate dates for current and next month only
   const generateAvailableDates = () => {
@@ -61,7 +69,7 @@ export default function Booking() {
     return slotDateTime < oneHourFromNow;
   };
 
-  // ✅ Format time with AM/PM
+  // Format time with AM/PM
   const formatTime = (hour) => {
     if (hour === 0) return '12:00 AM';
     if (hour === 12) return '12:00 PM';
@@ -69,6 +77,7 @@ export default function Booking() {
     return `${hour - 12}:00 PM`;
   };
 
+  // FIXED: Load slots with proper status handling
   const loadSlotsForDate = async (date) => {
     setLoading(true);
     setSelectedSlots([]); // Clear selected slots when date changes
@@ -84,18 +93,25 @@ export default function Booking() {
         // Check if slot is in the past
         const isPast = isToday && isSlotPast(date, slot.hour);
         
-        // ✅ Format with AM/PM
+        // Format with AM/PM
         const startTime = formatTime(slot.hour);
         const endTime = formatTime(slot.hour + 1);
+        
+        // Determine effective status
+        let effectiveStatus = slot.status;
+        if (isPast) {
+          effectiveStatus = 'past';
+        }
         
         return {
           id: slot.id,
           startTime: slot.startTime,
           endTime: slot.endTime,
-          displayTime: `${startTime} - ${endTime}`, // ✅ Shows "8:00 AM - 9:00 AM"
+          displayTime: `${startTime} - ${endTime}`,
           price: slot.price,
-          available: slot.status === 'available' && !isPast,
-          status: isPast ? 'past' : slot.status,
+          available: effectiveStatus === 'available',
+          status: effectiveStatus,
+          originalStatus: slot.status,
           isPast: isPast,
           hour: slot.hour,
           bookingId: slot.bookingId
@@ -127,8 +143,10 @@ export default function Booking() {
   const availableDates = generateAvailableDates();
 
   const toggleSlotSelection = (slot) => {
-    // Don't allow selection of unavailable or past slots
-    if (!slot.available || slot.isPast) return;
+    // Don't allow selection of unavailable, booked, or past slots
+    if (!slot.available || slot.isPast || slot.status === 'booked' || slot.status === 'unavailable') {
+      return;
+    }
 
     if (selectedSlots.find(s => s.id === slot.id)) {
       setSelectedSlots(selectedSlots.filter(s => s.id !== slot.id));
@@ -165,6 +183,10 @@ export default function Booking() {
 
   // Handle proceed click
   const handleProceedClick = () => {
+    if (selectedSlots.length === 0) {
+      alert('Please select at least one time slot');
+      return;
+    }
     setShowCustomerModal(true);
   };
 
@@ -199,11 +221,50 @@ export default function Booking() {
     setCustomerData(null);
   };
 
+  // FIXED: Get slot styling based on status
+  const getSlotStyle = (slot) => {
+    const status = slot.status;
+    
+    switch (status) {
+      case 'booked':
+        return {
+          container: 'bg-red-50 border-2 border-red-300 cursor-not-allowed opacity-60',
+          badge: 'bg-red-200 text-red-700',
+          icon: '🔴',
+          label: 'Booked'
+        };
+      case 'past':
+        return {
+          container: 'bg-gray-100 border-2 border-gray-200 cursor-not-allowed opacity-50',
+          badge: 'bg-gray-300 text-gray-600',
+          icon: '⏱️',
+          label: 'Past'
+        };
+      case 'unavailable':
+        return {
+          container: 'bg-gray-200 border-2 border-gray-400 cursor-not-allowed opacity-60',
+          badge: 'bg-gray-300 text-gray-800',
+          icon: '⚫',
+          label: 'Unavailable'
+        };
+      default: // available
+        const isSelected = selectedSlots.find(s => s.id === slot.id);
+        return {
+          container: isSelected
+            ? 'bg-green-50 border-2 border-green-600 shadow-md cursor-pointer'
+            : 'bg-white border-2 border-gray-200 hover:border-green-400 hover:shadow-sm cursor-pointer',
+          badge: 'bg-green-100 text-green-700',
+          icon: '🟢',
+          label: 'Available'
+        };
+    }
+  };
+
   const totalPrice = selectedSlots.reduce((sum, slot) => sum + slot.price, 0);
 
-  // Count only available slots (excluding past and booked)
+  // Count only available slots (excluding past, booked, and unavailable)
   const availableSlotCount = timeSlots.filter(
-    slot => slot.available && !slot.isPast
+    slot => slot.available && !slot.isPast && slot.status === 'available'
   ).length;
 
   return (
@@ -213,8 +274,8 @@ export default function Booking() {
         <div className="container mx-auto px-4 py-3">
           <div className="flex items-center">
             <button 
-              onClick={() => window.history.back()}
-              className="text-xl mr-3"
+              onClick={() => navigate('/')}
+              className="text-xl mr-3 hover:text-green-600 transition-colors"
             >
               ←
             </button>
@@ -331,39 +392,24 @@ export default function Booking() {
           <div className="space-y-2">
             {timeSlots.map((slot) => {
               const isSelected = selectedSlots.find(s => s.id === slot.id);
+              const styling = getSlotStyle(slot);
               
               return (
                 <button
                   key={slot.id}
                   onClick={() => toggleSlotSelection(slot)}
-                  disabled={!slot.available || slot.isPast}
-                  className={`w-full flex items-center justify-between p-3 rounded-lg transition-all ${
-                    slot.isPast
-                      ? 'bg-gray-100 border-2 border-gray-200 cursor-not-allowed opacity-50'
-                      : !slot.available
-                      ? 'bg-red-50 border-2 border-red-200 cursor-not-allowed opacity-75'
-                      : isSelected
-                      ? 'bg-green-50 border-2 border-green-600 shadow-md'
-                      : 'bg-white border-2 border-gray-200 hover:border-green-400 hover:shadow-sm'
-                  }`}
+                  disabled={!slot.available || slot.isPast || slot.status !== 'available'}
+                  className={`w-full flex items-center justify-between p-3 rounded-lg transition-all ${styling.container}`}
                 >
                   <div className="flex items-center">
                     <div className="text-left">
                       <div className="flex items-center gap-2">
-                        {/* ✅ Added "Time:" prefix with AM/PM format */}
                         <div className="text-base font-semibold text-gray-800">
                           Time: {slot.displayTime}
                         </div>
-                        {slot.isPast && (
-                          <span className="text-xs bg-gray-300 text-gray-600 px-2 py-0.5 rounded-full">
-                            Past
-                          </span>
-                        )}
-                        {slot.status === 'booked' && !slot.isPast && (
-                          <span className="text-xs bg-red-200 text-red-700 px-2 py-0.5 rounded-full">
-                            Booked
-                          </span>
-                        )}
+                        <span className={`text-xs px-2 py-0.5 rounded-full ${styling.badge}`}>
+                          {styling.label}
+                        </span>
                       </div>
                       <div className="text-xs text-gray-500">
                         1 hour slot
@@ -374,7 +420,7 @@ export default function Booking() {
                   <div className="flex items-center gap-3">
                     <div className="text-right">
                       <div className="text-base font-bold text-gray-800">
-                        {slot.isPast ? (
+                        {slot.status === 'past' || slot.status === 'booked' || slot.status === 'unavailable' ? (
                           <span className="text-gray-400 text-sm">Unavailable</span>
                         ) : (
                           `₹${slot.price}`
@@ -382,7 +428,7 @@ export default function Booking() {
                       </div>
                     </div>
                     
-                    {slot.available && !slot.isPast ? (
+                    {slot.available && slot.status === 'available' ? (
                       <div className={`w-7 h-7 rounded-full flex items-center justify-center border-2 ${
                         isSelected
                           ? 'bg-green-600 border-green-600'
@@ -393,18 +439,40 @@ export default function Booking() {
                         )}
                       </div>
                     ) : (
-                      <div className="w-7 h-7 rounded-full flex items-center justify-center bg-gray-200 border-2 border-gray-300">
-                        {slot.isPast ? (
-                          <span className="text-gray-500 text-base">⏱️</span>
-                        ) : (
-                          <span className="text-red-600 text-base">✕</span>
-                        )}
+                      <div className="w-7 h-7 rounded-full flex items-center justify-center">
+                        <span className="text-base">{styling.icon}</span>
                       </div>
                     )}
                   </div>
                 </button>
               );
             })}
+          </div>
+
+          {/* Legend */}
+          <div className="mt-6 p-4 bg-blue-50 border-2 border-blue-200 rounded-lg">
+            <h4 className="font-bold text-gray-800 mb-3 text-sm flex items-center">
+              <span className="mr-2">ℹ️</span>
+              Slot Status Legend
+            </h4>
+            <div className="grid grid-cols-2 gap-3 text-xs">
+              <div className="flex items-center gap-2">
+                <span className="text-base">🟢</span>
+                <span className="text-gray-700 font-medium">Available</span>
+              </div>
+              <div className="flex items-center gap-2">
+                <span className="text-base">🔴</span>
+                <span className="text-gray-700 font-medium">Booked</span>
+              </div>
+              <div className="flex items-center gap-2">
+                <span className="text-base">⚫</span>
+                <span className="text-gray-700 font-medium">Unavailable</span>
+              </div>
+              <div className="flex items-center gap-2">
+                <span className="text-base">⏱️</span>
+                <span className="text-gray-700 font-medium">Past Time</span>
+              </div>
+            </div>
           </div>
         </div>
       )}

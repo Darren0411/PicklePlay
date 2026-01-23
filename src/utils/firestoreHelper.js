@@ -1,9 +1,29 @@
-import { collection, addDoc, getDocs, query, where, doc, updateDoc, writeBatch } from 'firebase/firestore';
+import { collection, addDoc, getDocs, query, where, doc, updateDoc, writeBatch, setDoc } from 'firebase/firestore';
 import { db } from '../firebase';
 
+// ✅ Pure string-based date formatting (no timezone issues)
+const formatDateString = (date) => {
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, '0');
+  const day = String(date.getDate()).padStart(2, '0');
+  return `${year}-${month}-${day}`;
+};
+
+// ✅ Format time with AM/PM
+const formatTimeAMPM = (hour) => {
+  if (hour === 0) return '12:00 AM';
+  if (hour === 12) return '12:00 PM';
+  if (hour < 12) return `${hour}:00 AM`;
+  return `${hour - 12}:00 PM`;
+};
+
+// ✅ Create slots for a specific date (with string date key)
 export const initializeSlotsForDate = async (date) => {
   try {
-    const dateStr = date.toISOString().split('T')[0];
+    // ✅ Use pure string date (no timezone conversion)
+    const dateStr = formatDateString(date);
+    
+    console.log(`📅 Creating slots for: ${dateStr}`);
     
     // Check if slots already exist for this date
     const slotsQuery = query(
@@ -19,35 +39,43 @@ export const initializeSlotsForDate = async (date) => {
     // Only create if no slots exist
     if (existingSlots.empty) {
       const timeSlots = [
-        { hour: 8, time: '8:00 - 9:00' },
-        { hour: 9, time: '9:00 - 10:00' },
-        { hour: 10, time: '10:00 - 11:00' },
-        { hour: 11, time: '11:00 - 12:00' },
-        { hour: 12, time: '12:00 - 1:00' },
-        { hour: 13, time: '1:00 - 2:00' },
-        { hour: 14, time: '2:00 - 3:00' },
-        { hour: 15, time: '3:00 - 4:00' },
-        { hour: 16, time: '4:00 - 5:00' },
-        { hour: 17, time: '5:00 - 6:00' },
-        { hour: 18, time: '6:00 - 7:00' },
-        { hour: 19, time: '7:00 - 8:00' },
-        { hour: 20, time: '8:00 - 9:00' }
+        { hour: 8 },
+        { hour: 9 },
+        { hour: 10 },
+        { hour: 11 },
+        { hour: 12 },
+        { hour: 13 },
+        { hour: 14 },
+        { hour: 15 },
+        { hour: 16 },
+        { hour: 17 },
+        { hour: 18 },
+        { hour: 19 },
+        { hour: 20 }
       ];
 
       const batch = writeBatch(db);
       
       for (const slot of timeSlots) {
-        const slotRef = doc(db, 'slots', `${dateStr}_${slot.hour}`);
+        const startTime = `${slot.hour}:00`;
+        const endTime = `${slot.hour + 1}:00`;
+        const displayTime = `${formatTimeAMPM(slot.hour)} - ${formatTimeAMPM(slot.hour + 1)}`;
+        
+        // ✅ Use predictable document ID format: SLOT_YYYY-MM-DD_HOUR
+        const slotId = `SLOT_${dateStr}_${slot.hour}`;
+        const slotRef = doc(db, 'slots', slotId);
         
         batch.set(slotRef, {
-          date: dateStr,
-          time: slot.time,
+          date: dateStr, // ✅ Store as string "YYYY-MM-DD"
+          time: displayTime,
+          displayTime: displayTime,
           hour: slot.hour,
-          startTime: `${slot.hour}:00`,
-          endTime: `${slot.hour + 1}:00`,
+          startTime: startTime,
+          endTime: endTime,
           price: 200,
           status: 'available',
           courtNumber: 1,
+          courtName: 'PicklePlay Court',
           createdAt: new Date(),
           bookingId: null,
           userId: null
@@ -57,9 +85,9 @@ export const initializeSlotsForDate = async (date) => {
       }
 
       await batch.commit();
-      console.log(`✅ Created ${created} slots for ${dateStr}`);
+      console.log(`Created ${created} slots for ${dateStr}`);
     } else {
-      console.log(`⏭️ Skipped ${dateStr} - ${existingSlots.size} slots already exist`);
+      console.log(` Skipped ${dateStr} - ${existingSlots.size} slots already exist`);
     }
 
     return { 
@@ -79,13 +107,16 @@ export const initializeSlotsForDate = async (date) => {
   }
 };
 
+// ✅ Get slots for a specific date (with string date key)
 export const getSlotsForDate = async (date) => {
   try {
-    const dateStr = date.toISOString().split('T')[0];
+    const dateStr = formatDateString(date);
+    
+    console.log(`🔍 Fetching slots for: ${dateStr}`);
     
     const slotsQuery = query(
       collection(db, 'slots'),
-      where('date', '==', dateStr)
+      where('date', '==', dateStr) //  Exact string match
     );
     
     const querySnapshot = await getDocs(slotsQuery);
@@ -95,13 +126,19 @@ export const getSlotsForDate = async (date) => {
       ...doc.data()
     }));
 
+    // Sort by hour
+    slots.sort((a, b) => (a.hour || 0) - (b.hour || 0));
+
+    console.log(`✅ Found ${slots.length} slots for ${dateStr}`);
+
     return { success: true, slots };
   } catch (error) {
-    console.error('Error fetching slots:', error);
+    console.error(' Error fetching slots:', error);
     return { success: false, error: error.message, slots: [] };
   }
 };
 
+// ✅ Create booking and update slots
 export const createBooking = async (bookingData) => {
   try {
     const bookingRef = await addDoc(collection(db, 'bookings'), {
@@ -117,21 +154,40 @@ export const createBooking = async (bookingData) => {
       batch.update(slotRef, {
         status: 'booked',
         bookingId: bookingRef.id,
-        userId: bookingData.userId
+        userId: bookingData.userId || null
       });
     }
 
     await batch.commit();
+
+    console.log(`✅ Booking created: ${bookingRef.id}`);
 
     return { 
       success: true, 
       bookingId: bookingRef.id 
     };
   } catch (error) {
-    console.error('Error creating booking:', error);
+    console.error('❌ Error creating booking:', error);
     return { 
       success: false, 
       error: error.message 
     };
+  }
+};
+
+// ✅ Update slot status (used by admin)
+export const updateSlotStatus = async (slotId, newStatus) => {
+  try {
+    const slotRef = doc(db, 'slots', slotId);
+    await updateDoc(slotRef, {
+      status: newStatus
+    });
+
+    console.log(`✅ Slot ${slotId} updated to ${newStatus}`);
+
+    return { success: true };
+  } catch (error) {
+    console.error('❌ Error updating slot:', error);
+    return { success: false, error: error.message };
   }
 };
