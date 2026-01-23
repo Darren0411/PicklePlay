@@ -1,6 +1,17 @@
 import { useState, useEffect } from "react";
 import { initializeSlotsForDate } from "../utils/firestoreHelper";
-import { collection, query, orderBy, limit, getDocs, doc, getDoc, updateDoc, deleteDoc, where } from "firebase/firestore";
+import {
+  collection,
+  query,
+  orderBy,
+  limit,
+  getDocs,
+  doc,
+  getDoc,
+  updateDoc,
+  deleteDoc,
+  where,
+} from "firebase/firestore";
 import { db } from "../firebase";
 
 export default function Admin() {
@@ -32,7 +43,11 @@ export default function Admin() {
   const [deletingBookingId, setDeletingBookingId] = useState(null);
 
   // States for slot management
-  const [selectedSlotDate, setSelectedSlotDate] = useState(new Date());
+  const [selectedSlotDate, setSelectedSlotDate] = useState(() => {
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    return today;
+  });
   const [slotsForDate, setSlotsForDate] = useState([]);
   const [loadingSlotsForDate, setLoadingSlotsForDate] = useState(false);
   const [updatingSlot, setUpdatingSlot] = useState(null);
@@ -54,12 +69,31 @@ export default function Admin() {
     }
   }, [selectedSlotDate, isAuthenticated, activeTab]);
 
-  // Fetch slots with better error handling
+  // ✅ FIXED: Proper date string formatting
+  const formatDateString = (date) => {
+    const year = date.getFullYear();
+    const month = String(date.getMonth() + 1).padStart(2, "0");
+    const day = String(date.getDate()).padStart(2, "0");
+    return `${year}-${month}-${day}`;
+  };
+
+  // ✅ FIXED: Parse date from string
+  const parseDateString = (dateStr) => {
+    if (!dateStr || dateStr === "N/A") return null;
+    
+    // Handle YYYY-MM-DD format
+    if (typeof dateStr === "string" && dateStr.includes("-")) {
+      const [year, month, day] = dateStr.split("-").map(Number);
+      return new Date(year, month - 1, day);
+    }
+    
+    return new Date(dateStr);
+  };
+
   const fetchSlotsForDate = async () => {
     setLoadingSlotsForDate(true);
     try {
-      const dateString = selectedSlotDate.toISOString().split('T')[0];
-      console.log("🔍 Fetching slots for date:", dateString);
+      const dateString = formatDateString(selectedSlotDate);
 
       const slotsQuery = query(
         collection(db, "slots"),
@@ -72,15 +106,13 @@ export default function Admin() {
         ...doc.data(),
       }));
 
-      // Sort by start time
       slotsData.sort((a, b) => {
-        const timeA = a.startTime || a.time || "";
-        const timeB = b.startTime || b.time || "";
-        return timeA.localeCompare(timeB);
+        const hourA = a.hour || parseInt(a.startTime?.split(":")[0]) || 0;
+        const hourB = b.hour || parseInt(b.startTime?.split(":")[0]) || 0;
+        return hourA - hourB;
       });
 
       setSlotsForDate(slotsData);
-      console.log(`✅ Fetched ${slotsData.length} slots for ${dateString}`, slotsData);
     } catch (error) {
       console.error("❌ Error fetching slots:", error);
       setSlotsForDate([]);
@@ -90,53 +122,48 @@ export default function Admin() {
     }
   };
 
-  // FIXED: Toggle slot availability with real-time Firestore update
   const toggleSlotAvailability = async (slotId, currentStatus) => {
     if (currentStatus === "booked") {
       alert("❌ Cannot modify booked slots!");
       return;
     }
 
-    const newStatus = currentStatus === "available" ? "unavailable" : "available";
-    
-    if (!window.confirm(`Are you sure you want to mark this slot as ${newStatus}?`)) {
+    const newStatus =
+      currentStatus === "available" ? "unavailable" : "available";
+
+    if (
+      !window.confirm(
+        `Are you sure you want to mark this slot as ${newStatus}?`
+      )
+    ) {
       return;
     }
 
     setUpdatingSlot(slotId);
     try {
-      console.log(`🔄 Updating slot ${slotId} from ${currentStatus} to ${newStatus}`);
-      
-      // Update in Firestore
       const slotRef = doc(db, "slots", slotId);
       await updateDoc(slotRef, {
         status: newStatus,
       });
 
-      console.log(`✅ Firestore updated successfully for slot ${slotId}`);
-
-      // Update local state immediately for real-time UI update
       setSlotsForDate((prevSlots) =>
         prevSlots.map((slot) =>
           slot.id === slotId ? { ...slot, status: newStatus } : slot
         )
       );
 
-      // Show success message
       const statusEmoji = newStatus === "available" ? "🟢" : "⚫";
       alert(`${statusEmoji} Slot marked as ${newStatus} successfully!`);
-      
     } catch (error) {
       console.error("❌ Error updating slot:", error);
       alert(`Failed to update slot status: ${error.message}`);
-      
-      // Refresh slots to ensure consistency
       await fetchSlotsForDate();
     } finally {
       setUpdatingSlot(null);
     }
   };
 
+  // ✅ FIXED: Fetch bookings with proper slot time display
   const fetchBookings = async () => {
     setLoadingBookings(true);
     try {
@@ -147,59 +174,83 @@ export default function Admin() {
 
       const querySnapshot = await getDocs(bookingsQuery);
 
-      const bookingsDataPromises = querySnapshot.docs.map(async (docSnapshot) => {
-        const data = docSnapshot.data();
+      const bookingsDataPromises = querySnapshot.docs.map(
+        async (docSnapshot) => {
+          const data = docSnapshot.data();
 
-        let totalAmount = 0;
-        if (data.slots && Array.isArray(data.slots)) {
-          totalAmount = data.slots.reduce(
-            (sum, slot) => sum + (slot.price || 0),
-            0
-          );
-        }
-
-        let createdAtDate = new Date();
-        if (data.createdAt) {
-          if (typeof data.createdAt.toDate === "function") {
-            createdAtDate = data.createdAt.toDate();
-          } else if (data.createdAt instanceof Date) {
-            createdAtDate = data.createdAt;
-          } else if (
-            typeof data.createdAt === "string" ||
-            typeof data.createdAt === "number"
-          ) {
-            createdAtDate = new Date(data.createdAt);
+          let totalAmount = 0;
+          if (data.slots && Array.isArray(data.slots)) {
+            totalAmount = data.slots.reduce(
+              (sum, slot) => sum + (slot.price || 0),
+              0
+            );
           }
-        }
 
-        let phoneNumber = "N/A";
-        if (data.userId) {
-          try {
-            const userDocRef = doc(db, "users", data.userId);
-            const userDoc = await getDoc(userDocRef);
-            if (userDoc.exists()) {
-              phoneNumber = userDoc.data().phoneNumber || "N/A";
+          let createdAtDate = new Date();
+          if (data.createdAt) {
+            if (typeof data.createdAt.toDate === "function") {
+              createdAtDate = data.createdAt.toDate();
+            } else if (data.createdAt instanceof Date) {
+              createdAtDate = data.createdAt;
+            } else {
+              createdAtDate = new Date(data.createdAt);
             }
-          } catch (error) {
-            console.error("Error fetching user phone:", error);
           }
-        }
 
-        return {
-          id: docSnapshot.id,
-          customerName: data.customerName || "N/A",
-          customerEmail: data.customerEmail || "N/A",
-          customerPhone: phoneNumber,
-          date: data.date || "N/A",
-          formattedDate: data.formattedDate || "N/A",
-          paymentStatus: data.paymentStatus || "pending",
-          paymentMethod: data.paymentMethod || "N/A",
-          bookingStatus: data.bookingStatus || "pending",
-          slots: data.slots || [],
-          totalAmount: totalAmount,
-          createdAt: createdAtDate,
-        };
-      });
+          let phoneNumber = "N/A";
+          if (data.userId) {
+            try {
+              const userDocRef = doc(db, "users", data.userId);
+              const userDoc = await getDoc(userDocRef);
+              if (userDoc.exists()) {
+                phoneNumber = userDoc.data().phoneNumber || "N/A";
+              }
+            } catch (error) {
+              console.error("Error fetching user phone:", error);
+            }
+          }
+
+          // ✅ FIX: Process slots to extract proper time display
+          const processedSlots = (data.slots || []).map((slot) => {
+            let timeDisplay = "Not specified";
+            
+            // Try different time formats
+            if (slot.time) {
+              timeDisplay = slot.time;
+            } else if (slot.displayTime) {
+              timeDisplay = slot.displayTime;
+            } else if (slot.startTime && slot.endTime) {
+              timeDisplay = `${slot.startTime} - ${slot.endTime}`;
+            } else if (slot.hour !== undefined) {
+              const hour = slot.hour;
+              const startHour = hour < 10 ? `0${hour}` : `${hour}`;
+              const endHour = hour + 1 < 10 ? `0${hour + 1}` : `${hour + 1}`;
+              timeDisplay = `${startHour}:00 - ${endHour}:00`;
+            }
+
+            return {
+              ...slot,
+              timeDisplay: timeDisplay,
+              price: slot.price || 0,
+            };
+          });
+
+          return {
+            id: docSnapshot.id,
+            customerName: data.customerName || "N/A",
+            customerEmail: data.customerEmail || "N/A",
+            customerPhone: phoneNumber,
+            date: data.date || "N/A",
+            formattedDate: data.formattedDate || data.date || "N/A",
+            paymentStatus: data.paymentStatus || "pending",
+            paymentMethod: data.paymentMethod || "N/A",
+            bookingStatus: data.bookingStatus || "pending",
+            slots: processedSlots,
+            totalAmount: totalAmount,
+            createdAt: createdAtDate,
+          };
+        }
+      );
 
       const bookingsData = await Promise.all(bookingsDataPromises);
 
@@ -215,7 +266,7 @@ export default function Admin() {
   };
 
   const calculateStats = (bookingsData) => {
-    const today = new Date().toISOString().split("T")[0];
+    const today = formatDateString(new Date());
 
     const stats = {
       totalBookings: bookingsData.length,
@@ -337,7 +388,8 @@ export default function Admin() {
 
       if (!querySnapshot.empty) {
         const lastSlot = querySnapshot.docs[0].data();
-        const lastDate = new Date(lastSlot.date);
+        const [year, month, day] = lastSlot.date.split("-").map(Number);
+        const lastDate = new Date(year, month - 1, day);
         setLastSlotDate(lastDate);
       } else {
         setLastSlotDate(null);
@@ -455,15 +507,24 @@ export default function Admin() {
     }
   };
 
+  // ✅ FIXED: Format date for display
   const formatDate = (dateString) => {
-    if (!dateString) return "N/A";
-    const date = new Date(dateString);
-    return date.toLocaleDateString("en-US", {
-      weekday: "short",
-      month: "short",
-      day: "numeric",
-      year: "numeric",
-    });
+    if (!dateString || dateString === "N/A") return "N/A";
+
+    try {
+      const date = parseDateString(dateString);
+      if (!date) return dateString;
+
+      return date.toLocaleDateString("en-US", {
+        weekday: "short",
+        month: "short",
+        day: "numeric",
+        year: "numeric",
+      });
+    } catch (error) {
+      console.error("Error formatting date:", error);
+      return dateString;
+    }
   };
 
   const formatTime = (date) => {
@@ -476,7 +537,43 @@ export default function Admin() {
     });
   };
 
-  // Password Modal
+  const getSlotStatusStyle = (status) => {
+    switch (status) {
+      case "booked":
+        return {
+          bg: "bg-red-50",
+          border: "border-red-300",
+          badge: "bg-red-100 text-red-800",
+          emoji: "🔴",
+          text: "BOOKED",
+        };
+      case "unavailable":
+        return {
+          bg: "bg-gray-200",
+          border: "border-gray-400",
+          badge: "bg-gray-300 text-gray-800",
+          emoji: "⚫",
+          text: "UNAVAILABLE",
+        };
+      case "past":
+        return {
+          bg: "bg-gray-100",
+          border: "border-gray-300",
+          badge: "bg-gray-200 text-gray-600",
+          emoji: "⏱️",
+          text: "PAST",
+        };
+      default:
+        return {
+          bg: "bg-green-50",
+          border: "border-green-300",
+          badge: "bg-green-100 text-green-800",
+          emoji: "🟢",
+          text: "AVAILABLE",
+        };
+    }
+  };
+
   if (!isAuthenticated) {
     return (
       <div className="fixed inset-0 bg-gradient-to-br from-blue-900 via-blue-800 to-blue-900 flex items-center justify-center z-50 p-4">
@@ -520,7 +617,9 @@ export default function Admin() {
             {error && (
               <div className="bg-red-50 border-2 border-red-200 rounded-xl p-4 flex items-start animate-shake">
                 <span className="text-red-500 mr-3 text-xl">⚠️</span>
-                <span className="text-sm text-red-700 font-medium">{error}</span>
+                <span className="text-sm text-red-700 font-medium">
+                  {error}
+                </span>
               </div>
             )}
 
@@ -549,10 +648,8 @@ export default function Admin() {
     );
   }
 
-  // Admin Dashboard
   return (
     <div className="min-h-screen bg-gradient-to-br from-slate-50 via-blue-50 to-slate-50">
-      {/* Header */}
       <div className="bg-gradient-to-r from-blue-900 via-blue-800 to-blue-900 text-white shadow-2xl sticky top-0 z-50">
         <div className="max-w-[1600px] mx-auto px-4 py-6">
           <div className="flex items-center justify-between">
@@ -586,7 +683,6 @@ export default function Admin() {
       </div>
 
       <div className="max-w-[1600px] mx-auto p-4 md:p-8">
-        {/* Tab Navigation */}
         <div className="bg-white rounded-2xl shadow-xl p-2 mb-8 flex space-x-2">
           <button
             onClick={() => setActiveTab("bookings")}
@@ -623,10 +719,8 @@ export default function Admin() {
           </button>
         </div>
 
-        {/* Bookings Tab */}
         {activeTab === "bookings" && (
           <>
-            {/* Statistics Cards */}
             <div className="grid grid-cols-1 md:grid-cols-4 gap-6 mb-8">
               <div className="bg-gradient-to-br from-blue-600 to-blue-500 rounded-2xl p-6 text-white shadow-xl transform hover:scale-105 transition-transform">
                 <div className="flex items-center justify-between mb-3">
@@ -638,7 +732,9 @@ export default function Admin() {
                 <div className="text-4xl font-bold mb-2">
                   {stats.totalBookings}
                 </div>
-                <div className="text-blue-100 text-sm font-medium">Total Bookings</div>
+                <div className="text-blue-100 text-sm font-medium">
+                  Total Bookings
+                </div>
               </div>
 
               <div className="bg-gradient-to-br from-green-600 to-green-500 rounded-2xl p-6 text-white shadow-xl transform hover:scale-105 transition-transform">
@@ -651,7 +747,9 @@ export default function Admin() {
                 <div className="text-4xl font-bold mb-2">
                   ₹{stats.totalRevenue}
                 </div>
-                <div className="text-green-100 text-sm font-medium">Total Revenue</div>
+                <div className="text-green-100 text-sm font-medium">
+                  Total Revenue
+                </div>
               </div>
 
               <div className="bg-gradient-to-br from-orange-600 to-orange-500 rounded-2xl p-6 text-white shadow-xl transform hover:scale-105 transition-transform">
@@ -664,7 +762,9 @@ export default function Admin() {
                 <div className="text-4xl font-bold mb-2">
                   ₹{stats.pendingPayments}
                 </div>
-                <div className="text-orange-100 text-sm font-medium">Pending Payments</div>
+                <div className="text-orange-100 text-sm font-medium">
+                  Pending Payments
+                </div>
               </div>
 
               <div className="bg-gradient-to-br from-purple-600 to-purple-500 rounded-2xl p-6 text-white shadow-xl transform hover:scale-105 transition-transform">
@@ -677,11 +777,12 @@ export default function Admin() {
                 <div className="text-4xl font-bold mb-2">
                   {stats.todayBookings}
                 </div>
-                <div className="text-purple-100 text-sm font-medium">Today's Bookings</div>
+                <div className="text-purple-100 text-sm font-medium">
+                  Today's Bookings
+                </div>
               </div>
             </div>
 
-            {/* Filters & Search */}
             <div className="bg-white rounded-2xl shadow-xl p-6 mb-8">
               <div className="flex flex-col md:flex-row gap-4">
                 <div className="flex-1">
@@ -721,7 +822,6 @@ export default function Admin() {
               </div>
             </div>
 
-            {/* Bookings Table */}
             <div className="bg-white rounded-2xl shadow-xl overflow-hidden">
               <div className="p-6 border-b border-gray-200 bg-gradient-to-r from-blue-50 to-blue-100">
                 <div className="flex items-center justify-between">
@@ -730,7 +830,8 @@ export default function Admin() {
                     Booking Details
                   </h2>
                   <span className="text-sm text-gray-600 bg-white px-4 py-2 rounded-lg shadow">
-                    Showing <strong>{filteredBookings.length}</strong> of <strong>{bookings.length}</strong> bookings
+                    Showing <strong>{filteredBookings.length}</strong> of{" "}
+                    <strong>{bookings.length}</strong> bookings
                   </span>
                 </div>
               </div>
@@ -738,7 +839,9 @@ export default function Admin() {
               {loadingBookings ? (
                 <div className="text-center py-16">
                   <div className="animate-spin text-6xl mb-6">🎾</div>
-                  <p className="text-gray-600 text-lg font-medium">Loading bookings...</p>
+                  <p className="text-gray-600 text-lg font-medium">
+                    Loading bookings...
+                  </p>
                 </div>
               ) : filteredBookings.length === 0 ? (
                 <div className="text-center py-16">
@@ -773,10 +876,10 @@ export default function Admin() {
                           Amount
                         </th>
                         <th className="px-4 py-4 text-left text-xs font-bold uppercase tracking-wider w-[120px]">
-                          Payment
+                          Payment Method
                         </th>
                         <th className="px-4 py-4 text-left text-xs font-bold uppercase tracking-wider w-[120px]">
-                          Status
+                         Payment Status
                         </th>
                         <th className="px-4 py-4 text-left text-xs font-bold uppercase tracking-wider w-[200px]">
                           Actions
@@ -788,7 +891,7 @@ export default function Admin() {
                         <tr
                           key={booking.id}
                           className={`hover:bg-blue-50 transition-colors ${
-                            index % 2 === 0 ? 'bg-white' : 'bg-gray-50'
+                            index % 2 === 0 ? "bg-white" : "bg-gray-50"
                           }`}
                         >
                           <td className="px-4 py-4 whitespace-nowrap">
@@ -822,12 +925,16 @@ export default function Admin() {
                             <div className="text-sm font-bold text-gray-900 mb-2">
                               {formatDate(booking.date)}
                             </div>
-                            {/* slots with slot number and time */}
                             <div className="space-y-1">
                               {booking.slots?.map((slot, idx) => (
-                                <div key={idx} className="text-xs bg-blue-100 text-blue-800 px-2 py-1 rounded font-semibold flex items-center">
-                                  <span className="text-blue-600 font-bold mr-1">Slot {idx + 1} Time:</span>
-                                  <span>{slot.time || slot.displayTime || `${slot.startTime}-${slot.endTime}`}</span>
+                                <div
+                                  key={idx}
+                                  className="text-xs bg-blue-100 text-blue-800 px-2 py-1 rounded font-semibold flex items-center"
+                                >
+                                  <span className="text-blue-600 font-bold mr-1">
+                                    Slot {idx + 1} Time:
+                                  </span>
+                                  <span>{slot.timeDisplay}</span>
                                 </div>
                               ))}
                             </div>
@@ -838,12 +945,16 @@ export default function Admin() {
                             </div>
                           </td>
                           <td className="px-4 py-4 whitespace-nowrap">
-                            <div className={`text-xs font-semibold px-2 py-1 rounded inline-block ${
-                              booking.paymentMethod === "online"
-                                ? "bg-blue-100 text-blue-800"
-                                : "bg-purple-100 text-purple-800"
-                            }`}>
-                              {booking.paymentMethod === "online" ? "💳 Online" : "💵 Venue"}
+                            <div
+                              className={`text-xs font-semibold px-2 py-1 rounded inline-block ${
+                                booking.paymentMethod === "online"
+                                  ? "bg-blue-100 text-blue-800"
+                                  : "bg-purple-100 text-purple-800"
+                              }`}
+                            >
+                              {booking.paymentMethod === "online"
+                                ? "💳 Online"
+                                : "💵 Venue"}
                             </div>
                           </td>
                           <td className="px-4 py-4 whitespace-nowrap">
@@ -856,7 +967,10 @@ export default function Admin() {
                                       `Change payment status to "${e.target.value}"?`
                                     )
                                   ) {
-                                    updatePaymentStatus(booking.id, e.target.value);
+                                    updatePaymentStatus(
+                                      booking.id,
+                                      e.target.value
+                                    );
                                   }
                                 }}
                                 disabled={updatingStatus}
@@ -885,21 +999,31 @@ export default function Admin() {
                                     setEditingBookingId(booking.id);
                                   }
                                 }}
-                                disabled={updatingStatus || deletingBookingId === booking.id}
+                                disabled={
+                                  updatingStatus ||
+                                  deletingBookingId === booking.id
+                                }
                                 className={`px-3 py-1 rounded text-xs font-bold transition-all ${
                                   editingBookingId === booking.id
                                     ? "bg-gray-500 hover:bg-gray-600 text-white"
                                     : "bg-blue-500 hover:bg-blue-600 text-white"
                                 } disabled:opacity-50`}
                               >
-                                {editingBookingId === booking.id ? "Cancel" : "✏️ Edit"}
+                                {editingBookingId === booking.id
+                                  ? "Cancel"
+                                  : "✏️ Edit"}
                               </button>
                               <button
                                 onClick={() => deleteBooking(booking.id)}
-                                disabled={deletingBookingId === booking.id || updatingStatus}
+                                disabled={
+                                  deletingBookingId === booking.id ||
+                                  updatingStatus
+                                }
                                 className="px-3 py-1 rounded text-xs font-bold bg-red-500 hover:bg-red-600 text-white transition-all disabled:opacity-50"
                               >
-                                {deletingBookingId === booking.id ? "..." : "🗑️"}
+                                {deletingBookingId === booking.id
+                                  ? "..."
+                                  : "🗑️"}
                               </button>
                             </div>
                           </td>
@@ -913,7 +1037,6 @@ export default function Admin() {
           </>
         )}
 
-        {/* Manage Slots Tab */}
         {activeTab === "manageSlots" && (
           <>
             <div className="bg-white rounded-2xl shadow-xl p-8 mb-8">
@@ -935,19 +1058,33 @@ export default function Admin() {
                 </label>
                 <input
                   type="date"
-                  value={selectedSlotDate.toISOString().split('T')[0]}
-                  onChange={(e) => setSelectedSlotDate(new Date(e.target.value))}
+                  value={formatDateString(selectedSlotDate)}
+                  onChange={(e) => {
+                    const [year, month, day] = e.target.value.split("-");
+                    const newDate = new Date(
+                      parseInt(year),
+                      parseInt(month) - 1,
+                      parseInt(day)
+                    );
+                    newDate.setHours(0, 0, 0, 0);
+                    setSelectedSlotDate(newDate);
+                  }}
                   className="px-5 py-4 border-2 border-gray-300 rounded-xl focus:border-blue-500 focus:outline-none transition-all text-lg font-semibold"
                 />
                 <p className="text-sm text-gray-500 mt-3 bg-blue-50 p-3 rounded-lg">
-                  Viewing slots for: <strong>{formatDate(selectedSlotDate.toISOString())}</strong>
+                  Viewing slots for:{" "}
+                  <strong>
+                    {formatDate(formatDateString(selectedSlotDate))}
+                  </strong>
                 </p>
               </div>
 
               {loadingSlotsForDate ? (
                 <div className="text-center py-16">
                   <div className="animate-spin text-6xl mb-6">⏳</div>
-                  <p className="text-gray-600 text-lg font-medium">Loading slots...</p>
+                  <p className="text-gray-600 text-lg font-medium">
+                    Loading slots...
+                  </p>
                 </div>
               ) : slotsForDate.length === 0 ? (
                 <div className="text-center py-16 bg-gray-50 rounded-2xl">
@@ -956,81 +1093,82 @@ export default function Admin() {
                     No slots found for this date
                   </p>
                   <p className="text-gray-500 text-sm mb-4">
-                    The selected date: <strong>{selectedSlotDate.toISOString().split('T')[0]}</strong>
+                    The selected date:{" "}
+                    <strong>{formatDateString(selectedSlotDate)}</strong>
                   </p>
                   <p className="text-gray-500 text-sm">
                     Generate slots first or select a different date
                   </p>
                 </div>
               ) : (
-                <div className="space-y-4">
-                  {slotsForDate.map((slot) => (
-                    <div
-                      key={slot.id}
-                      className={`flex items-center justify-between p-6 rounded-xl border-2 transition-all ${
-                        slot.status === 'booked'
-                          ? 'bg-red-50 border-red-300'
-                          : slot.status === 'unavailable'
-                          ? 'bg-gray-100 border-gray-400'
-                          : 'bg-green-50 border-green-300'
-                      }`}
-                    >
-                      <div className="flex items-center space-x-6">
-                        <div className="text-4xl">
-                          {slot.status === 'booked' ? '🔴' : slot.status === 'unavailable' ? '⚫' : '🟢'}
-                        </div>
-                        <div>
-                          <div className="font-bold text-xl text-gray-900 mb-1">
-                            {slot.time || slot.displayTime || `${slot.startTime} - ${slot.endTime}`}
-                          </div>
-                          <div className="text-sm text-gray-600">
-                            <span className="bg-white px-3 py-1 rounded-lg font-semibold mr-2">₹{slot.price}</span>
-                            <span className={`px-3 py-1 rounded-lg font-bold ${
-                              slot.status === 'booked'
-                                ? 'bg-red-100 text-red-800'
-                                : slot.status === 'unavailable'
-                                ? 'bg-gray-200 text-gray-800'
-                                : 'bg-green-100 text-green-800'
-                            }`}>
-                              {slot.status?.toUpperCase() || 'UNKNOWN'}
-                            </span>
-                          </div>
-                        </div>
-                      </div>
+                <div className="space-y-2">
+                  {slotsForDate.map((slot) => {
+                    const styling = getSlotStatusStyle(slot.status);
 
-                      <button
-                        onClick={() => toggleSlotAvailability(slot.id, slot.status)}
-                        disabled={slot.status === 'booked' || updatingSlot === slot.id}
-                        className={`px-8 py-4 rounded-xl font-bold text-lg transition-all shadow-lg ${
-                          slot.status === 'booked'
-                            ? 'bg-gray-300 text-gray-500 cursor-not-allowed'
-                            : updatingSlot === slot.id
-                            ? 'bg-gray-400 text-white cursor-wait'
-                            : slot.status === 'unavailable'
-                            ? 'bg-green-600 text-white hover:bg-green-700'
-                            : 'bg-red-600 text-white hover:bg-red-700'
-                        }`}
+                    return (
+                      <div
+                        key={slot.id}
+                        className={`flex items-center justify-between p-4 rounded-lg border-2 transition-all ${styling.bg} ${styling.border}`}
                       >
-                        {updatingSlot === slot.id ? (
-                          <span className="flex items-center">
-                            <span className="animate-spin mr-2">⏳</span>
-                            Updating...
-                          </span>
-                        ) : slot.status === 'booked' ? (
-                          '🔒 Booked'
-                        ) : slot.status === 'unavailable' ? (
-                          '✓ Make Available'
-                        ) : (
-                          '✕ Make Unavailable'
-                        )}
-                      </button>
-                    </div>
-                  ))}
+                        <div className="flex items-center space-x-4">
+                          <div className="text-2xl">{styling.emoji}</div>
+                          <div>
+                            <div className="font-bold text-base text-gray-900">
+                              Time:{" "}
+                              {slot.time ||
+                                slot.displayTime ||
+                                `${slot.startTime} - ${slot.endTime}`}
+                            </div>
+                            <div className="text-sm text-gray-600 flex items-center gap-2 mt-1">
+                              <span className="bg-white px-2 py-1 rounded font-semibold text-xs">
+                                ₹{slot.price}
+                              </span>
+                              <span
+                                className={`px-2 py-1 rounded font-bold text-xs ${styling.badge}`}
+                              >
+                                {styling.text}
+                              </span>
+                            </div>
+                          </div>
+                        </div>
+
+                        <button
+                          onClick={() =>
+                            toggleSlotAvailability(slot.id, slot.status)
+                          }
+                          disabled={
+                            slot.status === "booked" || updatingSlot === slot.id
+                          }
+                          className={`px-6 py-2 rounded-lg font-bold text-sm transition-all shadow ${
+                            slot.status === "booked"
+                              ? "bg-gray-300 text-gray-500 cursor-not-allowed"
+                              : updatingSlot === slot.id
+                                ? "bg-gray-400 text-white cursor-wait"
+                                : slot.status === "unavailable"
+                                  ? "bg-green-600 text-white hover:bg-green-700"
+                                  : "bg-red-600 text-white hover:bg-red-700"
+                          }`}
+                        >
+                          {updatingSlot === slot.id ? (
+                            <span className="flex items-center">
+                              <span className="animate-spin mr-2">⏳</span>
+                              Updating...
+                            </span>
+                          ) : slot.status === "booked" ? (
+                            "🔒 Booked"
+                          ) : slot.status === "unavailable" ? (
+                            "✓ Make Available"
+                          ) : (
+                            "✕ Make Unavailable"
+                          )}
+                        </button>
+                      </div>
+                    );
+                  })}
                 </div>
               )}
             </div>
 
-            {/* Info Card */}
             <div className="bg-gradient-to-r from-blue-50 to-cyan-50 border-2 border-blue-200 rounded-2xl p-6">
               <h3 className="font-bold text-blue-900 mb-4 flex items-center text-xl">
                 <span className="mr-3 text-2xl">ℹ️</span>
@@ -1039,29 +1177,46 @@ export default function Admin() {
               <ul className="text-sm text-blue-800 space-y-3">
                 <li className="flex items-start">
                   <span className="mr-3 text-lg">🟢</span>
-                  <span><strong>Available:</strong> Customers can book this slot</span>
+                  <span>
+                    <strong>Available:</strong> Customers can book this slot
+                    (green background)
+                  </span>
                 </li>
                 <li className="flex items-start">
                   <span className="mr-3 text-lg">⚫</span>
-                  <span><strong>Unavailable:</strong> Slot is hidden from booking page</span>
+                  <span>
+                    <strong>Unavailable:</strong> Slot is hidden from booking
+                    page (dark gray background)
+                  </span>
                 </li>
                 <li className="flex items-start">
                   <span className="mr-3 text-lg">🔴</span>
-                  <span><strong>Booked:</strong> Cannot be modified (already booked by customer)</span>
+                  <span>
+                    <strong>Booked:</strong> Cannot be modified - already booked
+                    by customer (red background)
+                  </span>
+                </li>
+                <li className="flex items-start">
+                  <span className="mr-3 text-lg">⏱️</span>
+                  <span>
+                    <strong>Past:</strong> Slot time has passed (light gray
+                    background)
+                  </span>
                 </li>
                 <li className="flex items-start">
                   <span className="mr-3 text-lg">⚠️</span>
-                  <span>Use "Make Unavailable" for maintenance, holidays, or private events</span>
+                  <span>
+                    Use "Make Unavailable" for maintenance, holidays, or private
+                    events
+                  </span>
                 </li>
               </ul>
             </div>
           </>
         )}
 
-        {/* Generate Slots Tab - Keep all existing code */}
         {activeTab === "slots" && (
           <>
-            {/* Current Slots Info */}
             <div className="bg-white rounded-2xl shadow-xl p-8 mb-8">
               <div className="flex items-center mb-6">
                 <span className="text-4xl mr-4">📊</span>
@@ -1073,7 +1228,9 @@ export default function Admin() {
               {loadingLastDate ? (
                 <div className="flex items-center justify-center py-8">
                   <span className="animate-spin text-4xl mr-3">⏳</span>
-                  <span className="text-gray-600 text-lg">Checking existing slots...</span>
+                  <span className="text-gray-600 text-lg">
+                    Checking existing slots...
+                  </span>
                 </div>
               ) : lastSlotDate ? (
                 <div className="bg-gradient-to-r from-blue-50 to-cyan-50 border-2 border-blue-300 rounded-2xl p-6">
@@ -1094,7 +1251,9 @@ export default function Admin() {
                       <p className="text-sm text-blue-600 bg-white px-4 py-2 rounded-lg inline-block">
                         Next generation starts from{" "}
                         <strong>
-                          {new Date(lastSlotDate.getTime() + 86400000).toLocaleDateString("en-US", {
+                          {new Date(
+                            lastSlotDate.getTime() + 86400000
+                          ).toLocaleDateString("en-US", {
                             month: "short",
                             day: "numeric",
                             year: "numeric",
@@ -1113,7 +1272,8 @@ export default function Admin() {
                         No Existing Slots
                       </h3>
                       <p className="text-sm text-yellow-700">
-                        No slots found in the system. Generation will start from today.
+                        No slots found in the system. Generation will start from
+                        today.
                       </p>
                     </div>
                   </div>
@@ -1121,7 +1281,6 @@ export default function Admin() {
               )}
             </div>
 
-            {/* Slot Generation Section - Keep all existing code */}
             <div className="bg-white rounded-2xl shadow-xl p-6 mb-6">
               <div className="flex items-center mb-6">
                 <span className="text-3xl mr-3">📅</span>
@@ -1196,7 +1355,8 @@ export default function Admin() {
                   <li className="flex items-start">
                     <span className="mr-2">•</span>
                     <span>
-                      Each day gets <strong>13 time slots</strong> (8:00 AM - 9:00 PM)
+                      Each day gets <strong>13 time slots</strong> (8:00 AM -
+                      9:00 PM)
                     </span>
                   </li>
                   <li className="flex items-start">
