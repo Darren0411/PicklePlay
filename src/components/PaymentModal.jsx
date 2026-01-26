@@ -1,11 +1,12 @@
 import { useState } from 'react';
 import { db, auth } from '../firebase';
 import { collection, addDoc, updateDoc, doc, deleteDoc } from 'firebase/firestore';
+import axios from 'axios';
 
-// API URL - Change based on environment
+// API URL 
 const API_URL = import.meta.env.DEV 
   ? '/api'  // Development: Uses Vite proxy
-  : import.meta.env.VITE_API_URL || 'https://your-backend-url.com/api';  // Production
+  : import.meta.env.VITE_API_URL ;  // Production
 
 export default function PaymentModal({ 
   customerData, 
@@ -146,29 +147,19 @@ export default function PaymentModal({
 
       // Create Razorpay order via Express backend
       console.log('📤 Creating order via backend...');
-      const orderResponse = await fetch(`${API_URL}/create-order`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
+      const orderResponse = await axios.post(`${API_URL}/create-order`, {
+        amount: totalAmount * 100,
+        currency: 'INR',
+        receipt: bookingRef.id,
+        notes: {
+          bookingId: bookingRef.id,
+          customerName: customerData.name || user.displayName || 'Guest',
+          customerEmail: customerData.email || user.email,
+          date: selectedDate.toISOString(),
         },
-        body: JSON.stringify({
-          amount: totalAmount * 100,
-          currency: 'INR',
-          receipt: bookingRef.id,
-          notes: {
-            bookingId: bookingRef.id,
-            customerName: customerData.name || user.displayName || 'Guest',
-            customerEmail: customerData.email || user.email,
-            date: selectedDate.toISOString(),
-          },
-        }),
       });
 
-      if (!orderResponse.ok) {
-        throw new Error(`HTTP error! status: ${orderResponse.status}`);
-      }
-
-      const orderData = await orderResponse.json();
+      const orderData = orderResponse.data;
       console.log('📦 Order response:', orderData);
 
       if (!orderData.success) {
@@ -205,23 +196,13 @@ export default function PaymentModal({
           try {
             // Verify payment via Express backend
             console.log('🔍 Verifying payment...');
-            const verifyResponse = await fetch(`${API_URL}/verify-payment`, {
-              method: 'POST',
-              headers: {
-                'Content-Type': 'application/json',
-              },
-              body: JSON.stringify({
-                razorpay_order_id: response.razorpay_order_id,
-                razorpay_payment_id: response.razorpay_payment_id,
-                razorpay_signature: response.razorpay_signature,
-              }),
+            const verifyResponse = await axios.post(`${API_URL}/verify-payment`, {
+              razorpay_order_id: response.razorpay_order_id,
+              razorpay_payment_id: response.razorpay_payment_id,
+              razorpay_signature: response.razorpay_signature,
             });
 
-            if (!verifyResponse.ok) {
-              throw new Error(`HTTP error! status: ${verifyResponse.status}`);
-            }
-
-            const verifyData = await verifyResponse.json();
+            const verifyData = verifyResponse.data;
             console.log('🔍 Verification response:', verifyData);
 
             if (!verifyData.success) {
