@@ -147,7 +147,7 @@ export default function PaymentModal({
 
       // Create Razorpay order via Express backend
       console.log('📤 Creating order via backend...');
-      const orderResponse = await axios.post(`${API_URL}/create-order`, {
+      const orderResponse = await axios.post(`${API_URL}/api/create-order`, {
         amount: totalAmount * 100,
         currency: 'INR',
         receipt: bookingRef.id,
@@ -196,7 +196,7 @@ export default function PaymentModal({
           try {
             // Verify payment via Express backend
             console.log('🔍 Verifying payment...');
-            const verifyResponse = await axios.post(`${API_URL}/verify-payment`, {
+            const verifyResponse = await axios.post(`${API_URL}/api/verify-payment`, {
               razorpay_order_id: response.razorpay_order_id,
               razorpay_payment_id: response.razorpay_payment_id,
               razorpay_signature: response.razorpay_signature,
