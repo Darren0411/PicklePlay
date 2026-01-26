@@ -41,6 +41,7 @@ app.post('/api/create-order', async (req, res) => {
       currency: currency,
       receipt: receipt,
       notes: notes || {},
+      payment_capture: 1, // Auto-capture payment
     };
 
     const order = await razorpay.orders.create(options);
