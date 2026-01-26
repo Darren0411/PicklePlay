@@ -9,15 +9,18 @@ dotenv.config();
 const app = express();
 const PORT = process.env.PORT || 3001;
 
-// CORS Configuration - Allow your Vercel frontend
+// CORS Configuration
 const corsOptions = {
   origin: [
-    process.env.FRONTEND_URL || 'https://pickle-play-eight.vercel.app',
-    'http://localhost:5173', // For local development
-    'http://localhost:3000'
+    'https://pickle-play-eight.vercel.app',
+    'http://pickle-play-eight.vercel.app',  // Added HTTP version
+    'http://localhost:5173',
+    'http://localhost:3000',
+    'http://localhost:5174'  //  Added alternate port
   ],
-  methods: ['GET', 'POST', 'PUT', 'DELETE'],
+  methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],  // Added OPTIONS
   credentials: true,
+  allowedHeaders: ['Content-Type', 'Authorization'],  // Added allowed headers
   optionsSuccessStatus: 200
 };
 
@@ -36,7 +39,11 @@ app.get('/', (req, res) => {
   res.json({ 
     status: 'Server is running',
     message: 'PicklePlay Booking API',
-    timestamp: new Date().toISOString()
+    timestamp: new Date().toISOString(),
+    endpoints: [
+      'POST /api/create-order',
+      'POST /api/verify-payment'
+    ]
   });
 });
 
@@ -55,11 +62,11 @@ app.post('/api/create-order', async (req, res) => {
     }
 
     const options = {
-      amount: amount, // Amount in paise (already converted from frontend)
+      amount: amount,
       currency: currency,
       receipt: receipt,
       notes: notes || {},
-      payment_capture: 1, // Auto-capture payment
+      payment_capture: 1,
     };
 
     const order = await razorpay.orders.create(options);
@@ -95,7 +102,6 @@ app.post('/api/verify-payment', async (req, res) => {
       });
     }
 
-    // Generate signature for verification
     const body = razorpay_order_id + '|' + razorpay_payment_id;
     const expectedSignature = crypto
       .createHmac('sha256', process.env.RAZORPAY_KEY_SECRET)
@@ -125,6 +131,18 @@ app.post('/api/verify-payment', async (req, res) => {
       error: error.message || 'Failed to verify payment',
     });
   }
+});
+
+// 404 handler for undefined routes
+app.use((req, res) => {
+  res.status(404).json({
+    success: false,
+    error: 'Route not found',
+    availableEndpoints: [
+      'POST /api/create-order',
+      'POST /api/verify-payment'
+    ]
+  });
 });
 
 // Start server
