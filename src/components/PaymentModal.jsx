@@ -312,7 +312,7 @@ export default function PaymentModal({
 
       const razorpay = new window.Razorpay(options);
       
-      // Handle payment failure (REMOVED ALERT FROM HERE)
+      // Handle payment failure
       razorpay.on('payment.failed', async function (response) {
         console.error('❌ Payment failed:', response.error);
         
@@ -324,8 +324,23 @@ export default function PaymentModal({
           console.error('Error deleting booking:', error);
         }
         
-        // Show single alert with error details
-        alert(`❌ Payment failed: ${response.error.description}\n\nReason: ${response.error.reason || 'Unknown'}`);
+        // Show helpful error message based on error type
+        let errorMessage = '❌ Payment Failed\n\n';
+        
+        if (response.error.description.toLowerCase().includes('international')) {
+          errorMessage += '🌐 International cards are not enabled.\n\n';
+          errorMessage += '💡 Solutions:\n';
+          errorMessage += '1. Enable international cards in Razorpay Dashboard\n';
+          errorMessage += '2. Use an Indian card for payment\n';
+          errorMessage += '3. Try "Pay at Venue" option\n\n';
+          errorMessage += `Error: ${response.error.description}`;
+        } else {
+          errorMessage += `${response.error.description}\n\n`;
+          errorMessage += `Reason: ${response.error.reason || 'Unknown'}\n\n`;
+          errorMessage += '💡 Try: Use "Pay at Venue" option or contact support';
+        }
+        
+        alert(errorMessage);
         setProcessing(false);
       });
 
@@ -440,7 +455,7 @@ export default function PaymentModal({
                   )}
                 </div>
                 <div className="flex-1 text-left">
-                  <div className="font-semibold text-gray-800">Pay Now (Recommended)</div>
+                  <div className="font-semibold text-gray-800">Pay Now</div>
                   <div className="text-xs text-gray-500">UPI, Cards, Net Banking & More</div>
                 </div>
                 <span className="text-3xl">💳</span>
