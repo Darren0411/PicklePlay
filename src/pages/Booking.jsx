@@ -1,510 +1,182 @@
-import { useState, useRef, useEffect } from 'react';
-import { useNavigate } from 'react-router-dom';
-import Calendar from '../components/Calendar';
-import CustomerDetailsModal from '../components/CustomerDetailsModal';
-import PaymentModal from '../components/PaymentModal';
-import SuccessModal from '../components/SuccessModal';
-import { getSlotsForDate } from '../utils/firestoreHelper';
+import { useState, useEffect } from "react";
+import Calendar from "../components/Calendar";
+import CustomerDetailsModal from "../components/CustomerDetailsModal";
+import PaymentModal from "../components/PaymentModal";
+import SuccessModal from "../components/SuccessModal";
+import { getSlotsForDate } from "../utils/firestoreHelper";
+import BookingHeader from "@/components/booking/BookingHeader";
+import DateSelector from "@/components/booking/DateSelector";
+import SlotList from "@/components/booking/SlotList";
+import SlotLegend from "@/components/booking/SlotLegend";
+import BookingBottomBar from "@/components/booking/BookingBottomBar";
+
+const formatTime = (hour) => {
+  if (hour === 0) return "12:00 AM";
+  if (hour === 12) return "12:00 PM";
+  if (hour < 12) return `${hour}:00 AM`;
+  return `${hour - 12}:00 PM`;
+};
+
+const isSlotPast = (slotDate, slotHour) => {
+  const now = new Date();
+  const slotDateTime = new Date(slotDate);
+  slotDateTime.setHours(slotHour, 0, 0, 0);
+  const oneHourFromNow = new Date(now.getTime() + 60 * 60 * 1000);
+  return slotDateTime < oneHourFromNow;
+};
+
+const generateAvailableDates = () => {
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+  const endDate = new Date(today.getFullYear(), today.getMonth() + 2, 0);
+  const dates = [];
+  const currentDate = new Date(today);
+  while (currentDate <= endDate) {
+    dates.push(new Date(currentDate));
+    currentDate.setDate(currentDate.getDate() + 1);
+  }
+  return dates;
+};
 
 export default function Booking() {
-  const navigate = useNavigate();
   const [selectedDate, setSelectedDate] = useState(new Date());
   const [selectedSlots, setSelectedSlots] = useState([]);
   const [showDatePicker, setShowDatePicker] = useState(false);
-  const dateScrollRef = useRef(null);
-  const dateRefs = useRef({});
   const [timeSlots, setTimeSlots] = useState([]);
   const [loading, setLoading] = useState(false);
   const [paymentLoading, setPaymentLoading] = useState(false);
-  
-  // Modal states
   const [showCustomerModal, setShowCustomerModal] = useState(false);
   const [showPaymentModal, setShowPaymentModal] = useState(false);
   const [showSuccessModal, setShowSuccessModal] = useState(false);
   const [customerData, setCustomerData] = useState(null);
   const [bookingResult, setBookingResult] = useState(null);
 
-  // FIXED: Format date string without timezone issues
-  const formatDateString = (date) => {
-    const year = date.getFullYear();
-    const month = String(date.getMonth() + 1).padStart(2, '0');
-    const day = String(date.getDate()).padStart(2, '0');
-    return `${year}-${month}-${day}`;
-  };
+  const availableDates = generateAvailableDates();
 
-  // Generate dates for current and next month only
-  const generateAvailableDates = () => {
-    const today = new Date();
-    today.setHours(0, 0, 0, 0);
-    
-    const endDate = new Date(today.getFullYear(), today.getMonth() + 2, 0);
-    
-    const dates = [];
-    const currentDate = new Date(today);
-    
-    while (currentDate <= endDate) {
-      dates.push(new Date(currentDate));
-      currentDate.setDate(currentDate.getDate() + 1);
-    }
-    
-    return dates;
-  };
-
-  // Fetch slots from Firestore when date changes
   useEffect(() => {
     loadSlotsForDate(selectedDate);
   }, [selectedDate]);
 
-  // Check if slot is in the past
-  const isSlotPast = (slotDate, slotHour) => {
-    const now = new Date();
-    const slotDateTime = new Date(slotDate);
-    
-    // Set slot time
-    slotDateTime.setHours(slotHour, 0, 0, 0);
-    
-    // Add 1 hour buffer - slots within next hour are also unavailable
-    const oneHourFromNow = new Date(now.getTime() + 60 * 60 * 1000);
-    
-    return slotDateTime < oneHourFromNow;
-  };
-
-  // Format time with AM/PM
-  const formatTime = (hour) => {
-    if (hour === 0) return '12:00 AM';
-    if (hour === 12) return '12:00 PM';
-    if (hour < 12) return `${hour}:00 AM`;
-    return `${hour - 12}:00 PM`;
-  };
-
-  // FIXED: Load slots with proper status handling
   const loadSlotsForDate = async (date) => {
     setLoading(true);
-    setSelectedSlots([]); // Clear selected slots when date changes
-    
+    setSelectedSlots([]);
     const result = await getSlotsForDate(date);
-    
     if (result.success) {
       const now = new Date();
       const isToday = date.toDateString() === now.toDateString();
-      
-      // Transform Firestore data to match UI format
-      const formattedSlots = result.slots.map(slot => {
-        // Check if slot is in the past
+      const formattedSlots = result.slots.map((slot) => {
         const isPast = isToday && isSlotPast(date, slot.hour);
-        
-        // Format with AM/PM
         const startTime = formatTime(slot.hour);
         const endTime = formatTime(slot.hour + 1);
-        
-        // Determine effective status
         let effectiveStatus = slot.status;
-        if (isPast) {
-          effectiveStatus = 'past';
-        }
-        
+        if (isPast) effectiveStatus = "past";
         return {
           id: slot.id,
           startTime: slot.startTime,
           endTime: slot.endTime,
           displayTime: `${startTime} - ${endTime}`,
           price: slot.price,
-          available: effectiveStatus === 'available',
+          available: effectiveStatus === "available",
           status: effectiveStatus,
           originalStatus: slot.status,
-          isPast: isPast,
+          isPast,
           hour: slot.hour,
-          bookingId: slot.bookingId
+          bookingId: slot.bookingId,
         };
       });
-      
-      // Sort by hour (8 AM to 9 PM)
       formattedSlots.sort((a, b) => a.hour - b.hour);
-      
       setTimeSlots(formattedSlots);
-      console.log('✅ Loaded slots:', formattedSlots);
     } else {
-      console.error('Error loading slots:', result.error);
       setTimeSlots([]);
     }
-    
     setLoading(false);
   };
 
-  const formatDateForDisplay = (date) => {
-    return date.toLocaleDateString('en-US', {
-      weekday: 'long',
-      year: 'numeric',
-      month: 'long',
-      day: 'numeric'
-    });
-  };
-
-  const availableDates = generateAvailableDates();
-
   const toggleSlotSelection = (slot) => {
-    // Don't allow selection of unavailable, booked, or past slots
-    if (!slot.available || slot.isPast || slot.status === 'booked' || slot.status === 'unavailable') {
-      return;
-    }
-
-    if (selectedSlots.find(s => s.id === slot.id)) {
-      setSelectedSlots(selectedSlots.filter(s => s.id !== slot.id));
+    if (!slot.available || slot.isPast || slot.status !== "available") return;
+    if (selectedSlots.find((s) => s.id === slot.id)) {
+      setSelectedSlots(selectedSlots.filter((s) => s.id !== slot.id));
     } else {
       setSelectedSlots([...selectedSlots, slot]);
     }
   };
 
-  const handleDateSelect = (date) => {
-    setSelectedDate(date);
-    setShowDatePicker(false);
-    
-    setTimeout(() => {
-      scrollToDate(date);
-    }, 100);
-  };
-
-  const scrollToDate = (date) => {
-    const dateKey = date.toDateString();
-    const element = dateRefs.current[dateKey];
-    
-    if (element && dateScrollRef.current) {
-      const container = dateScrollRef.current;
-      const elementLeft = element.offsetLeft;
-      const containerWidth = container.offsetWidth;
-      const elementWidth = element.offsetWidth;
-      
-      container.scrollTo({
-        left: elementLeft - (containerWidth / 2) + (elementWidth / 2),
-        behavior: 'smooth'
-      });
-    }
-  };
-
-  // Handle proceed click
   const handleProceedClick = () => {
-    if (selectedSlots.length === 0) {
-      alert('Please select at least one time slot');
-      return;
-    }
+    if (selectedSlots.length === 0) return;
     setShowCustomerModal(true);
   };
 
-  // Handle customer details success
   const handleCustomerDetailsSuccess = (data) => {
     setCustomerData(data);
     setShowCustomerModal(false);
     setShowPaymentModal(true);
   };
 
-  // Handle payment method selection and booking
   const handlePaymentSuccess = async (bookingDetails) => {
-    console.log('✅ Payment completed:', bookingDetails);
-    
-    // Close payment modal
     setShowPaymentModal(false);
-    
-    // Show success modal with booking details
     setBookingResult(bookingDetails);
     setShowSuccessModal(true);
-    
-    // Clear selected slots and refresh
     setSelectedSlots([]);
     loadSlotsForDate(selectedDate);
     setPaymentLoading(false);
   };
 
-  // Handle success modal close
   const handleSuccessClose = () => {
     setShowSuccessModal(false);
     setBookingResult(null);
     setCustomerData(null);
   };
 
-  // FIXED: Get slot styling based on status
-  const getSlotStyle = (slot) => {
-    const status = slot.status;
-    
-    switch (status) {
-      case 'booked':
-        return {
-          container: 'bg-red-50 border-2 border-red-300 cursor-not-allowed opacity-60',
-          badge: 'bg-red-200 text-red-700',
-          icon: '🔴',
-          label: 'Booked'
-        };
-      case 'past':
-        return {
-          container: 'bg-gray-100 border-2 border-gray-200 cursor-not-allowed opacity-50',
-          badge: 'bg-gray-300 text-gray-600',
-          icon: '⏱️',
-          label: 'Past'
-        };
-      case 'unavailable':
-        return {
-          container: 'bg-gray-200 border-2 border-gray-400 cursor-not-allowed opacity-60',
-          badge: 'bg-gray-300 text-gray-800',
-          icon: '⚫',
-          label: 'Unavailable'
-        };
-      default: // available
-        const isSelected = selectedSlots.find(s => s.id === slot.id);
-        return {
-          container: isSelected
-            ? 'bg-green-50 border-2 border-green-600 shadow-md cursor-pointer'
-            : 'bg-white border-2 border-gray-200 hover:border-green-400 hover:shadow-sm cursor-pointer',
-          badge: 'bg-green-100 text-green-700',
-          icon: '🟢',
-          label: 'Available'
-        };
-    }
-  };
-
   const totalPrice = selectedSlots.reduce((sum, slot) => sum + slot.price, 0);
 
-  // Count only available slots (excluding past, booked, and unavailable)
-  const availableSlotCount = timeSlots.filter(
-    slot => slot.available && !slot.isPast && slot.status === 'available'
-  ).length;
-
   return (
-    <div className="min-h-screen bg-gray-50 pb-24">
-      {/* Header */}
-      <div className="bg-white shadow-sm sticky top-0 z-40">
-        <div className="container mx-auto px-4 py-3">
-          <div className="flex items-center">
-            <button 
-              onClick={() => navigate('/')}
-              className="text-xl mr-3 hover:text-green-600 transition-colors"
-            >
-              ←
-            </button>
-            <h1 className="text-lg font-bold text-gray-800">PicklePlay Court</h1>
+    <div className="min-h-screen bg-background pb-24">
+      <BookingHeader />
+      <DateSelector
+        selectedDate={selectedDate}
+        setSelectedDate={setSelectedDate}
+        availableDates={availableDates}
+        onOpenCalendar={() => setShowDatePicker(true)}
+      />
+
+      <div className="container mx-auto px-4 pt-3 pb-1">
+        <div className="flex items-center justify-between">
+          <div className="flex items-center gap-2">
+            <div className="w-2 h-2 rounded-sm bg-primary" />
+            <span className="text-xs text-muted-foreground">
+              Available Slots ({timeSlots.filter((s) => s.status === "available").length})
+            </span>
           </div>
+          <span className="text-xs text-muted-foreground">₹200 per hour</span>
         </div>
       </div>
 
-      {/* Date Selector - Horizontal Scroll */}
-      <div className="bg-white border-b sticky top-[56px] z-30">
-        <div className="container mx-auto px-4 py-3">
-          <div className="flex items-center justify-between mb-2">
-            <button 
-              onClick={() => setShowDatePicker(true)}
-              className="flex items-center text-gray-800 hover:text-blue-600 transition-colors"
-            >
-              <span className="text-lg mr-2">📅</span>
-              <span className="text-sm font-semibold">
-                {selectedDate.toLocaleDateString('en-US', { month: 'long', year: 'numeric' })}
-              </span>
-            </button>
-          </div>
-
-          {/* Horizontal Date Scroll */}
-          <div 
-            ref={dateScrollRef}
-            className="flex gap-2 overflow-x-auto pb-2 scrollbar-hide"
-          >
-            {availableDates.map((date, index) => {
-              const isSelected = date.toDateString() === selectedDate.toDateString();
-              const isToday = date.toDateString() === new Date().toDateString();
-              const dateKey = date.toDateString();
-              
-              return (
-                <button
-                  key={index}
-                  ref={(el) => (dateRefs.current[dateKey] = el)}
-                  onClick={() => setSelectedDate(date)}
-                  className={`flex-shrink-0 flex flex-col items-center justify-center w-14 h-16 rounded-lg transition-all ${
-                    isSelected
-                      ? 'bg-green-600 text-white shadow-lg'
-                      : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
-                  }`}
-                >
-                  <div className="text-[10px] font-medium">
-                    {date.toLocaleDateString('en-US', { weekday: 'short' })}
-                  </div>
-                  <div className="text-xl font-bold mt-1">
-                    {date.getDate().toString().padStart(2, '0')}
-                  </div>
-                  {isToday && (
-                    <div className="text-[8px] mt-1 font-semibold">
-                      Today
-                    </div>
-                  )}
-                </button>
-              );
-            })}
-          </div>
-        </div>
-      </div>
-
-      {/* Available Slots Info */}
-      <div className="container mx-auto px-4 py-3">
-        <div className="flex items-center justify-between text-xs">
-          <div className="flex items-center text-gray-600">
-            <span className="w-2 h-2 rounded-full bg-green-500 mr-2"></span>
-            <span>Available Slots ({availableSlotCount})</span>
-          </div>
-          <div className="flex items-center text-gray-500">
-            <span className="mr-1">ℹ️</span>
-            <span>₹200 per hour</span>
-          </div>
-        </div>
-      </div>
-
-      {/* Loading State */}
-      {loading && (
-        <div className="container mx-auto px-4 py-8">
-          <div className="flex items-center justify-center">
-            <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-green-600"></div>
-            <span className="ml-3 text-gray-600">Loading slots...</span>
-          </div>
-        </div>
-      )}
-
-      {/* Payment Processing State */}
       {paymentLoading && (
-        <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-50">
-          <div className="bg-white rounded-2xl p-8 max-w-sm mx-4 text-center">
-            <div className="animate-spin rounded-full h-16 w-16 border-b-4 border-green-600 mx-auto mb-4"></div>
-            <h3 className="text-lg font-bold text-gray-800 mb-2">Processing Payment...</h3>
-            <p className="text-sm text-gray-600">Please don't close this window</p>
+        <div className="fixed inset-0 bg-background/80 backdrop-blur-sm flex items-center justify-center z-50">
+          <div className="bg-card border border-border rounded-lg p-8 max-w-sm mx-4 text-center">
+            <div className="w-8 h-8 border-2 border-primary border-t-transparent rounded-full animate-spin mx-auto mb-4" />
+            <h3 className="text-sm font-semibold text-foreground mb-1">Processing Payment</h3>
+            <p className="text-xs text-muted-foreground">Please don't close this window</p>
           </div>
         </div>
       )}
 
-      {/* No Slots Available */}
-      {!loading && timeSlots.length === 0 && (
-        <div className="container mx-auto px-4 py-8">
-          <div className="bg-yellow-50 border-2 border-yellow-200 rounded-lg p-6 text-center">
-            <span className="text-4xl mb-2 block">📅</span>
-            <h3 className="text-lg font-bold text-gray-800 mb-2">No Slots Available</h3>
-            <p className="text-sm text-gray-600">
-              Slots for this date haven't been created yet. Please try another date.
-            </p>
-          </div>
-        </div>
-      )}
+      <SlotList
+        timeSlots={timeSlots}
+        selectedSlots={selectedSlots}
+        toggleSlotSelection={toggleSlotSelection}
+        loading={loading}
+      />
 
-      {/* Time Slots Grid */}
-      {!loading && timeSlots.length > 0 && (
-        <div className="container mx-auto px-4">
-          <div className="space-y-2">
-            {timeSlots.map((slot) => {
-              const isSelected = selectedSlots.find(s => s.id === slot.id);
-              const styling = getSlotStyle(slot);
-              
-              return (
-                <button
-                  key={slot.id}
-                  onClick={() => toggleSlotSelection(slot)}
-                  disabled={!slot.available || slot.isPast || slot.status !== 'available'}
-                  className={`w-full flex items-center justify-between p-3 rounded-lg transition-all ${styling.container}`}
-                >
-                  <div className="flex items-center">
-                    <div className="text-left">
-                      <div className="flex items-center gap-2">
-                        <div className="text-base font-semibold text-gray-800">
-                          Time: {slot.displayTime}
-                        </div>
-                        <span className={`text-xs px-2 py-0.5 rounded-full ${styling.badge}`}>
-                          {styling.label}
-                        </span>
-                      </div>
-                      <div className="text-xs text-gray-500">
-                        1 hour slot
-                      </div>
-                    </div>
-                  </div>
+      {!loading && timeSlots.length > 0 && <SlotLegend />}
 
-                  <div className="flex items-center gap-3">
-                    <div className="text-right">
-                      <div className="text-base font-bold text-gray-800">
-                        {slot.status === 'past' || slot.status === 'booked' || slot.status === 'unavailable' ? (
-                          <span className="text-gray-400 text-sm">Unavailable</span>
-                        ) : (
-                          `₹${slot.price}`
-                        )}
-                      </div>
-                    </div>
-                    
-                    {slot.available && slot.status === 'available' ? (
-                      <div className={`w-7 h-7 rounded-full flex items-center justify-center border-2 ${
-                        isSelected
-                          ? 'bg-green-600 border-green-600'
-                          : 'border-gray-300'
-                      }`}>
-                        {isSelected && (
-                          <span className="text-white text-lg">✓</span>
-                        )}
-                      </div>
-                    ) : (
-                      <div className="w-7 h-7 rounded-full flex items-center justify-center">
-                        <span className="text-base">{styling.icon}</span>
-                      </div>
-                    )}
-                  </div>
-                </button>
-              );
-            })}
-          </div>
+      <BookingBottomBar
+        selectedSlots={selectedSlots}
+        totalPrice={totalPrice}
+        onProceed={handleProceedClick}
+        loading={loading || paymentLoading}
+      />
 
-          {/* Legend */}
-          <div className="mt-6 p-4 bg-blue-50 border-2 border-blue-200 rounded-lg">
-            <h4 className="font-bold text-gray-800 mb-3 text-sm flex items-center">
-              <span className="mr-2">ℹ️</span>
-              Slot Status Legend
-            </h4>
-            <div className="grid grid-cols-2 gap-3 text-xs">
-              <div className="flex items-center gap-2">
-                <span className="text-base">🟢</span>
-                <span className="text-gray-700 font-medium">Available</span>
-              </div>
-              <div className="flex items-center gap-2">
-                <span className="text-base">🔴</span>
-                <span className="text-gray-700 font-medium">Booked</span>
-              </div>
-              <div className="flex items-center gap-2">
-                <span className="text-base">⚫</span>
-                <span className="text-gray-700 font-medium">Unavailable</span>
-              </div>
-              <div className="flex items-center gap-2">
-                <span className="text-base">⏱️</span>
-                <span className="text-gray-700 font-medium">Past Time</span>
-              </div>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* Bottom Fixed Bar - Proceed Button */}
-      {selectedSlots.length > 0 && !paymentLoading && (
-        <div className="fixed bottom-0 left-0 right-0 bg-white border-t-2 border-gray-200 shadow-lg z-50">
-          <div className="container mx-auto px-4 py-3">
-            <div className="flex items-center justify-between">
-              <div>
-                <div className="text-xs text-gray-600">
-                  {selectedSlots.length} Slot{selectedSlots.length > 1 ? 's' : ''} Selected
-                </div>
-                <div className="text-xl font-bold text-gray-800">
-                  ₹{totalPrice.toLocaleString()}
-                  <span className="text-xs text-gray-500 ml-1">+ taxes</span>
-                </div>
-              </div>
-              <button 
-                onClick={handleProceedClick}
-                disabled={loading || paymentLoading}
-                className="bg-orange-600 text-white px-6 py-3 rounded-lg font-bold text-sm hover:bg-orange-700 transition-all shadow-lg flex items-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed"
-              >
-                {loading || paymentLoading ? 'Processing...' : 'PROCEED'}
-                <span>→</span>
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* Customer Details Modal */}
       {showCustomerModal && (
         <CustomerDetailsModal
           selectedSlots={selectedSlots}
@@ -513,8 +185,6 @@ export default function Booking() {
           onSuccess={handleCustomerDetailsSuccess}
         />
       )}
-
-      {/* Payment Modal */}
       {showPaymentModal && customerData && (
         <PaymentModal
           customerData={customerData}
@@ -525,20 +195,19 @@ export default function Booking() {
           onPaymentSuccess={handlePaymentSuccess}
         />
       )}
-
-      {/* Success Modal */}
       {showSuccessModal && bookingResult && (
         <SuccessModal
           bookingDetails={bookingResult}
           onClose={handleSuccessClose}
         />
       )}
-
-      {/* Date Picker Modal */}
       {showDatePicker && (
         <Calendar
           selectedDate={selectedDate}
-          onDateSelect={handleDateSelect}
+          onDateSelect={(date) => {
+            setSelectedDate(date);
+            setShowDatePicker(false);
+          }}
           onClose={() => setShowDatePicker(false)}
         />
       )}
