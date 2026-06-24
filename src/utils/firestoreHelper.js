@@ -1,7 +1,7 @@
 import { collection, addDoc, getDocs, query, where, doc, updateDoc, writeBatch, setDoc } from 'firebase/firestore';
 import { db } from '../firebase';
 
-// ✅ Pure string-based date formatting (no timezone issues)
+//  Pure string-based date formatting (no timezone issues)
 const formatDateString = (date) => {
   const year = date.getFullYear();
   const month = String(date.getMonth() + 1).padStart(2, '0');
@@ -9,7 +9,7 @@ const formatDateString = (date) => {
   return `${year}-${month}-${day}`;
 };
 
-// ✅ Format time with AM/PM
+//  Format time with AM/PM
 const formatTimeAMPM = (hour) => {
   if (hour === 0) return '12:00 AM';
   if (hour === 12) return '12:00 PM';
@@ -17,10 +17,10 @@ const formatTimeAMPM = (hour) => {
   return `${hour - 12}:00 PM`;
 };
 
-// ✅ Create slots for a specific date (with string date key)
+//  Create slots for a specific date (with string date key)
 export const initializeSlotsForDate = async (date) => {
   try {
-    // ✅ Use pure string date (no timezone conversion)
+    //  Use pure string date (no timezone conversion)
     const dateStr = formatDateString(date);
     
     console.log(`📅 Creating slots for: ${dateStr}`);
@@ -61,12 +61,12 @@ export const initializeSlotsForDate = async (date) => {
         const endTime = `${slot.hour + 1}:00`;
         const displayTime = `${formatTimeAMPM(slot.hour)} - ${formatTimeAMPM(slot.hour + 1)}`;
         
-        // ✅ Use predictable document ID format: SLOT_YYYY-MM-DD_HOUR
+        //  Use predictable document ID format: SLOT_YYYY-MM-DD_HOUR
         const slotId = `SLOT_${dateStr}_${slot.hour}`;
         const slotRef = doc(db, 'slots', slotId);
         
         batch.set(slotRef, {
-          date: dateStr, // ✅ Store as string "YYYY-MM-DD"
+          date: dateStr, //  Store as string "YYYY-MM-DD"
           time: displayTime,
           displayTime: displayTime,
           hour: slot.hour,
@@ -107,7 +107,7 @@ export const initializeSlotsForDate = async (date) => {
   }
 };
 
-// ✅ Get slots for a specific date (with string date key)
+//  Get slots for a specific date (with string date key)
 export const getSlotsForDate = async (date) => {
   try {
     const dateStr = formatDateString(date);

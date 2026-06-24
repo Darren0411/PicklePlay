@@ -47,7 +47,7 @@ export default function SlotInitializer() {
       await new Promise(resolve => setTimeout(resolve, 100));
     }
     
-    setProgress(`✅ Completed! Initialized ${completedDays} days of slots.`);
+    setProgress(` Completed! Initialized ${completedDays} days of slots.`);
     setCompleted(true);
     setLoading(false);
   };
