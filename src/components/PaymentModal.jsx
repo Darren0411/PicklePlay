@@ -4,9 +4,10 @@ import { collection, addDoc, updateDoc, doc, deleteDoc } from 'firebase/firestor
 import axios from 'axios';
 import { Button } from '@/components/ui/button';
 
-const API_URL = import.meta.env.DEV
-  ? '/api'
-  : import.meta.env.VITE_API_URL;
+// const API_URL = import.meta.env.DEV
+//   ? '/api'
+//   : import.meta.env.VITE_API_URL;
+const API_URL = import.meta.env.VITE_API_URL;
 
 export default function PaymentModal({
   customerData, selectedSlots, selectedDate,
