@@ -2,527 +2,280 @@ import { useState } from 'react';
 import { db, auth } from '../firebase';
 import { collection, addDoc, updateDoc, doc, deleteDoc } from 'firebase/firestore';
 import axios from 'axios';
+import { Button } from '@/components/ui/button';
 
-// API URL 
-const API_URL = import.meta.env.DEV 
-  ? '/api'  // Development: Uses Vite proxy
-  : import.meta.env.VITE_API_URL ;  // Production
+const API_URL = import.meta.env.DEV
+  ? '/api'
+  : import.meta.env.VITE_API_URL;
 
-export default function PaymentModal({ 
-  customerData, 
-  selectedSlots, 
-  selectedDate,
-  totalPrice, 
-  onClose, 
-  onPaymentSuccess 
+export default function PaymentModal({
+  customerData, selectedSlots, selectedDate,
+  totalPrice, onClose, onPaymentSuccess
 }) {
   const [paymentMethod, setPaymentMethod] = useState('online');
   const [processing, setProcessing] = useState(false);
 
   const formatDateForDisplay = (date) => {
-    const dateObj = new Date(date);
-    return dateObj.toLocaleDateString('en-US', {
-      weekday: 'long',
-      year: 'numeric',
-      month: 'long',
-      day: 'numeric'
+    return new Date(date).toLocaleDateString('en-US', {
+      weekday: 'long', year: 'numeric', month: 'long', day: 'numeric',
     });
   };
 
-  const handlePayment = async (e) => {
+  const handlePayment = (e) => {
     e.preventDefault();
-    
-    if (paymentMethod === 'venue') {
-      handleVenuePayment();
-    } else {
-      handleOnlinePayment();
-    }
+    if (paymentMethod === 'venue') handleVenuePayment();
+    else handleOnlinePayment();
   };
 
   const handleVenuePayment = async () => {
     setProcessing(true);
-    
     try {
       const user = auth.currentUser;
-      if (!user) {
-        alert('⚠️ Please sign in to complete booking');
-        setProcessing(false);
-        return;
-      }
-
+      if (!user) { alert('Please sign in to complete booking'); setProcessing(false); return; }
       const bookingData = {
         userId: user.uid,
         customerName: customerData.name || user.displayName || 'Guest',
         customerEmail: customerData.email || user.email,
         date: selectedDate.toISOString(),
         formattedDate: formatDateForDisplay(selectedDate),
-        slots: selectedSlots.map(slot => ({
-          time: slot.displayTime,
-          price: slot.price,
-          slotId: slot.id
-        })),
+        slots: selectedSlots.map(slot => ({ time: slot.displayTime, price: slot.price, slotId: slot.id })),
         totalAmount: totalPrice,
         paymentStatus: 'pending',
         bookingStatus: 'confirmed',
         paymentMethod: 'venue',
         createdAt: new Date(),
       };
-
       const bookingRef = await addDoc(collection(db, 'bookings'), bookingData);
-      console.log('✅ Booking created for venue payment:', bookingRef.id);
-
-      await updateDoc(doc(db, 'bookings', bookingRef.id), {
-        bookingStatus: 'confirmed',
-      });
-
-      await Promise.all(
-        selectedSlots.map(slot =>
-          updateDoc(doc(db, 'slots', slot.id), { 
-            status: 'booked',
-            bookingId: bookingRef.id
-          })
-        )
-      );
-
+      await updateDoc(doc(db, 'bookings', bookingRef.id), { bookingStatus: 'confirmed' });
+      await Promise.all(selectedSlots.map(slot => updateDoc(doc(db, 'slots', slot.id), { status: 'booked', bookingId: bookingRef.id })));
       setProcessing(false);
-
       onPaymentSuccess({
-        id: bookingRef.id,
-        userId: user.uid,
+        id: bookingRef.id, userId: user.uid,
         customerName: customerData.name || user.displayName || 'Guest',
         customerEmail: customerData.email || user.email,
         date: selectedDate.toISOString(),
         formattedDate: formatDateForDisplay(selectedDate),
-        slots: selectedSlots.map(slot => ({
-          time: slot.displayTime,
-          price: slot.price,
-        })),
-        totalAmount: totalPrice,
-        paymentStatus: 'pending',
-        bookingStatus: 'confirmed',
-        paymentMethod: 'venue',
+        slots: selectedSlots.map(slot => ({ time: slot.displayTime, price: slot.price })),
+        totalAmount: totalPrice, paymentStatus: 'pending',
+        bookingStatus: 'confirmed', paymentMethod: 'venue',
       });
-
     } catch (error) {
-      console.error('❌ Venue booking error:', error);
-      alert('❌ Booking failed: ' + error.message);
+      alert('Booking failed: ' + error.message);
       setProcessing(false);
     }
   };
 
   const handleOnlinePayment = async () => {
     setProcessing(true);
-    
     try {
       const user = auth.currentUser;
-      if (!user) {
-        alert('⚠️ Please sign in to complete booking');
-        setProcessing(false);
-        return;
-      }
-
-      const totalAmount = totalPrice;
-
-      // Create booking document first
+      if (!user) { alert('Please sign in to complete booking'); setProcessing(false); return; }
       const bookingData = {
         userId: user.uid,
         customerName: customerData.name || user.displayName || 'Guest',
         customerEmail: customerData.email || user.email,
         date: selectedDate.toISOString(),
         formattedDate: formatDateForDisplay(selectedDate),
-        slots: selectedSlots.map(slot => ({
-          time: slot.displayTime,
-          price: slot.price,
-          slotId: slot.id
-        })),
-        totalAmount: totalAmount,
-        paymentStatus: 'pending',
-        bookingStatus: 'pending',
-        paymentMethod: 'online',
-        createdAt: new Date(),
+        slots: selectedSlots.map(slot => ({ time: slot.displayTime, price: slot.price, slotId: slot.id })),
+        totalAmount: totalPrice, paymentStatus: 'pending',
+        bookingStatus: 'pending', paymentMethod: 'online', createdAt: new Date(),
       };
-
       const bookingRef = await addDoc(collection(db, 'bookings'), bookingData);
-      console.log('✅ Booking created:', bookingRef.id);
-
-      // Create Razorpay order via Express backend
-      console.log('📤 Creating order via backend...');
       const orderResponse = await axios.post(`${API_URL}/api/create-order`, {
-        amount: totalAmount * 100,
-        currency: 'INR',
-        receipt: bookingRef.id,
-        notes: {
-          bookingId: bookingRef.id,
-          customerName: customerData.name || user.displayName || 'Guest',
-          customerEmail: customerData.email || user.email,
-          date: selectedDate.toISOString(),
-        },
+        amount: totalPrice * 100, currency: 'INR', receipt: bookingRef.id,
+        notes: { bookingId: bookingRef.id, customerName: customerData.name || user.displayName || 'Guest', customerEmail: customerData.email || user.email, date: selectedDate.toISOString() },
       });
-
       const orderData = orderResponse.data;
-      console.log('📦 Order response:', orderData);
+      if (!orderData.success) throw new Error(orderData.error || 'Failed to create order');
 
-      if (!orderData.success) {
-        throw new Error(orderData.error || 'Failed to create order');
-      }
-
-      console.log('✅ Razorpay order created:', orderData.orderId);
-
-      // Razorpay checkout options
       const options = {
         key: import.meta.env.VITE_RAZORPAY_KEY_ID,
-        amount: orderData.amount,
-        currency: orderData.currency,
+        amount: orderData.amount, currency: orderData.currency,
         name: 'PicklePlay',
-        description: `Court Booking - ${formatDateForDisplay(selectedDate)}`,
+        description: `Court Booking — ${formatDateForDisplay(selectedDate)}`,
         image: '/favicon.svg',
         order_id: orderData.orderId,
-        
-        prefill: {
-          name: customerData.name || user.displayName || 'Guest',
-          email: customerData.email || user.email,
-          contact: customerData.phone || '9999999999',
-        },
-        notes: {
-          bookingId: bookingRef.id,
-        },
-        theme: {
-          color: '#16a34a',
-        },
-        
+        prefill: { name: customerData.name || user.displayName || 'Guest', email: customerData.email || user.email, contact: customerData.phone || '9999999999' },
+        notes: { bookingId: bookingRef.id },
+        theme: { color: 'var(--primary)' },
         handler: async function (response) {
-          console.log('✅ Payment response:', response);
-          
           try {
-            // Verify payment via Express backend
-            console.log('🔍 Verifying payment...');
             const verifyResponse = await axios.post(`${API_URL}/api/verify-payment`, {
               razorpay_order_id: response.razorpay_order_id,
               razorpay_payment_id: response.razorpay_payment_id,
               razorpay_signature: response.razorpay_signature,
             });
-
-            const verifyData = verifyResponse.data;
-            console.log('🔍 Verification response:', verifyData);
-
-            if (!verifyData.success) {
-              throw new Error('Payment verification failed');
-            }
-
-            console.log('✅ Payment verified successfully');
-
-            // Update booking with payment details
+            if (!verifyResponse.data.success) throw new Error('Payment verification failed');
             await updateDoc(doc(db, 'bookings', bookingRef.id), {
-              paymentStatus: 'paid',
-              bookingStatus: 'confirmed',
+              paymentStatus: 'paid', bookingStatus: 'confirmed',
               paymentId: response.razorpay_payment_id,
               razorpayOrderId: response.razorpay_order_id,
               razorpaySignature: response.razorpay_signature,
-              paidAt: new Date(),
-              verified: true,
+              paidAt: new Date(), verified: true,
             });
-
-            // Mark slots as booked
-            await Promise.all(
-              selectedSlots.map(slot =>
-                updateDoc(doc(db, 'slots', slot.id), { 
-                  status: 'booked',
-                  bookingId: bookingRef.id
-                })
-              )
-            );
-
-            console.log('✅ Booking confirmed and slots updated');
+            await Promise.all(selectedSlots.map(slot => updateDoc(doc(db, 'slots', slot.id), { status: 'booked', bookingId: bookingRef.id })));
             setProcessing(false);
-
             onPaymentSuccess({
-              id: bookingRef.id,
-              userId: user.uid,
+              id: bookingRef.id, userId: user.uid,
               customerName: customerData.name || user.displayName || 'Guest',
               customerEmail: customerData.email || user.email,
               date: selectedDate.toISOString(),
               formattedDate: formatDateForDisplay(selectedDate),
-              slots: selectedSlots.map(slot => ({
-                time: slot.displayTime,
-                price: slot.price,
-              })),
-              totalAmount: totalAmount,
-              paymentStatus: 'paid',
-              bookingStatus: 'confirmed',
-              paymentId: response.razorpay_payment_id,
-              paymentMethod: 'online',
+              slots: selectedSlots.map(slot => ({ time: slot.displayTime, price: slot.price })),
+              totalAmount: totalPrice, paymentStatus: 'paid',
+              bookingStatus: 'confirmed', paymentId: response.razorpay_payment_id, paymentMethod: 'online',
             });
-
           } catch (error) {
-            console.error('❌ Error verifying payment:', error);
-            // Delete the pending booking
-            try {
-              await deleteDoc(doc(db, 'bookings', bookingRef.id));
-              console.log('🗑️ Deleted failed booking');
-            } catch (deleteError) {
-              console.error('Error deleting booking:', deleteError);
-            }
-            alert('❌ Payment verification failed. Please contact support with Payment ID: ' + response.razorpay_payment_id);
+            try { await deleteDoc(doc(db, 'bookings', bookingRef.id)); } catch {}
+            alert('Payment verification failed. Please contact support with Payment ID: ' + response.razorpay_payment_id);
             setProcessing(false);
           }
         },
-        
         modal: {
           ondismiss: async function () {
-            console.log('❌ Payment cancelled by user');
-            
-            try {
-              await deleteDoc(doc(db, 'bookings', bookingRef.id));
-              console.log('🗑️ Deleted pending booking');
-            } catch (error) {
-              console.error('Error deleting booking:', error);
-            }
-            
+            try { await deleteDoc(doc(db, 'bookings', bookingRef.id)); } catch {}
             setProcessing(false);
-            // No alert here - payment was just cancelled, not failed
           },
         },
       };
 
-      // Check if Razorpay is loaded
       if (typeof window.Razorpay === 'undefined') {
-        alert('❌ Payment gateway failed to load. Please refresh the page.');
+        alert('Payment gateway failed to load. Please refresh the page.');
         setProcessing(false);
         return;
       }
 
       const razorpay = new window.Razorpay(options);
-      
-      // Handle payment failure
       razorpay.on('payment.failed', async function (response) {
-        console.error('❌ Payment failed:', response.error);
-        
-        // Delete the pending booking
-        try {
-          await deleteDoc(doc(db, 'bookings', bookingRef.id));
-          console.log('🗑️ Deleted failed booking');
-        } catch (error) {
-          console.error('Error deleting booking:', error);
-        }
-        
-        // Show helpful error message based on error type
-        let errorMessage = '❌ Payment Failed\n\n';
-        
-        if (response.error.description.toLowerCase().includes('international')) {
-          errorMessage += '🌐 International cards are not enabled.\n\n';
-          errorMessage += '💡 Solutions:\n';
-          errorMessage += '1. Enable international cards in Razorpay Dashboard\n';
-          errorMessage += '2. Use an Indian card for payment\n';
-          errorMessage += '3. Try "Pay at Venue" option\n\n';
-          errorMessage += `Error: ${response.error.description}`;
-        } else {
-          errorMessage += `${response.error.description}\n\n`;
-          errorMessage += `Reason: ${response.error.reason || 'Unknown'}\n\n`;
-          errorMessage += '💡 Try: Use "Pay at Venue" option or contact support';
-        }
-        
-        alert(errorMessage);
+        try { await deleteDoc(doc(db, 'bookings', bookingRef.id)); } catch {}
+        alert('Payment failed: ' + response.error.description);
         setProcessing(false);
       });
-
       razorpay.open();
-
     } catch (error) {
-      console.error('❌ Payment error:', error);
-      alert('❌ Payment failed: ' + error.message);
+      alert('Payment failed: ' + error.message);
       setProcessing(false);
     }
   };
 
   return (
-    <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-50 p-4">
-      <div className="bg-white rounded-2xl max-w-md w-full shadow-2xl relative max-h-[90vh] overflow-y-auto animate-[slideUp_0.3s_ease-out]">
-        <button
-          onClick={onClose}
-          disabled={processing}
-          className="absolute top-4 right-4 text-gray-400 hover:text-gray-600 text-2xl z-10 transition-colors disabled:opacity-50"
-        >
-          ✕
-        </button>
+    <div className="fixed inset-0 bg-foreground/50 backdrop-blur-sm flex items-center justify-center z-50 p-4">
+      <div className="bg-background border border-border rounded-lg w-full max-w-sm max-h-[90vh] overflow-y-auto">
 
-        <div className="bg-gradient-to-r from-green-600 to-green-500 text-white p-6 rounded-t-2xl">
-          <div className="flex items-center space-x-3">
-            <div className="text-3xl">💳</div>
-            <div>
-              <h2 className="text-2xl font-bold">Payment</h2>
-              <p className="text-green-100 text-sm mt-1">Choose your payment method</p>
-            </div>
+        {/* Header */}
+        <div className="flex items-center justify-between px-5 py-4 border-b border-border">
+          <div>
+            <h2 className="text-sm font-semibold tracking-tight text-foreground">Payment</h2>
+            <p className="text-xs text-muted-foreground mt-0.5">Choose your payment method</p>
+          </div>
+          <button
+            onClick={onClose}
+            disabled={processing}
+            className="text-muted-foreground hover:text-foreground transition-colors text-lg leading-none disabled:opacity-30"
+          >
+            ✕
+          </button>
+        </div>
+
+        {/* Customer info */}
+        <div className="px-5 py-3 border-b border-border flex items-center gap-3">
+          {customerData.photoURL && (
+            <img src={customerData.photoURL} alt={customerData.name} className="w-7 h-7 rounded-md border border-border" />
+          )}
+          <div>
+            <p className="text-xs font-medium text-foreground">{customerData.name}</p>
+            <p className="text-xs text-muted-foreground">{customerData.email}</p>
           </div>
         </div>
 
-        <div className="bg-gradient-to-r from-green-50 to-emerald-50 p-4 border-b border-green-200">
-          <div className="flex items-center space-x-3">
-            {customerData.photoURL && (
-              <img 
-                src={customerData.photoURL} 
-                alt={customerData.name}
-                className="w-12 h-12 rounded-full border-2 border-green-300"
-              />
-            )}
-            <div className="flex-1">
-              <div className="flex items-center space-x-2">
-                <span className="text-xl">👤</span>
-                <span className="font-semibold text-green-900">{customerData.name}</span>
-              </div>
-              <div className="flex items-center space-x-2 mt-1">
-                <span className="text-lg">📧</span>
-                <span className="text-sm text-green-700">{customerData.email}</span>
-              </div>
+        <div className="p-5 space-y-4">
+          {/* Booking summary */}
+          <div className="border border-border rounded-md p-4">
+            <p className="text-xs font-medium text-foreground mb-3 uppercase tracking-wide">Booking Summary</p>
+            <div className="flex items-center justify-between mb-3">
+              <span className="text-xs text-muted-foreground">Date</span>
+              <span className="text-xs font-medium text-foreground">{formatDateForDisplay(selectedDate)}</span>
             </div>
-          </div>
-        </div>
-
-        <div className="p-6 border-b">
-          <div className="flex items-center justify-between mb-3">
-            <h3 className="font-bold text-gray-800 flex items-center">
-              <span className="text-xl mr-2">🎾</span>
-              Booking Summary
-            </h3>
-          </div>
-          
-          <div className="mb-3 p-3 bg-blue-50 rounded-lg border-2 border-blue-200">
-            <div className="flex items-center justify-between">
-              <span className="text-sm text-blue-700">Date:</span>
-              <span className="text-sm font-bold text-blue-900">
-                {formatDateForDisplay(selectedDate)}
-              </span>
+            <div className="space-y-1.5 mb-3">
+              {selectedSlots.map((slot, index) => (
+                <div key={index} className="flex justify-between items-center">
+                  <span className="text-xs text-muted-foreground">{slot.displayTime}</span>
+                  <span className="text-xs font-medium text-foreground">₹{slot.price}</span>
+                </div>
+              ))}
+            </div>
+            <div className="flex justify-between items-center pt-3 border-t border-border">
+              <span className="text-sm font-semibold text-foreground">Total</span>
+              <span className="text-lg font-semibold text-foreground">₹{totalPrice}</span>
             </div>
           </div>
 
-          <div className="space-y-2 mb-3">
-            {selectedSlots.map((slot, index) => (
-              <div key={index} className="flex justify-between items-center p-3 bg-gray-50 rounded-lg">
-                <span className="text-gray-700 text-sm font-medium">
-                  Time: {slot.displayTime}
-                </span>
-                <span className="font-semibold text-gray-800">₹{slot.price}</span>
-              </div>
-            ))}
-          </div>
-
-          <div className="flex justify-between items-center p-4 bg-gradient-to-r from-green-600 to-green-500 text-white rounded-lg shadow-lg">
-            <span className="font-bold text-lg">Total Amount</span>
-            <span className="font-bold text-2xl">₹{totalPrice}</span>
-          </div>
-        </div>
-
-        <form onSubmit={handlePayment} className="p-6">
-          <div className="mb-6">
-            <label className="block text-sm font-semibold text-gray-700 mb-3 items-center">
-              <span className="text-xl mr-2">💰</span>
-              Payment Method
-            </label>
-            <div className="space-y-3">
-              <button
-                type="button"
-                onClick={() => setPaymentMethod('online')}
-                disabled={processing}
-                className={`w-full p-4 rounded-xl border-2 transition-all flex items-center transform hover:scale-105 disabled:opacity-50 disabled:cursor-not-allowed ${
-                  paymentMethod === 'online'
-                    ? 'border-green-600 bg-green-50 shadow-lg'
-                    : 'border-gray-300 hover:border-green-400 bg-white'
-                }`}
-              >
-                <div className={`w-6 h-6 rounded-full border-2 mr-3 flex items-center justify-center ${
-                  paymentMethod === 'online' ? 'border-green-600' : 'border-gray-300'
-                }`}>
-                  {paymentMethod === 'online' && (
-                    <div className="w-3 h-3 rounded-full bg-green-600"></div>
-                  )}
-                </div>
-                <div className="flex-1 text-left">
-                  <div className="font-semibold text-gray-800">Pay Now</div>
-                  <div className="text-xs text-gray-500">UPI, Cards, Net Banking & More</div>
-                </div>
-                <span className="text-3xl">💳</span>
-              </button>
-
-              <button
-                type="button"
-                onClick={() => setPaymentMethod('venue')}
-                disabled={processing}
-                className={`w-full p-4 rounded-xl border-2 transition-all flex items-center transform hover:scale-105 disabled:opacity-50 disabled:cursor-not-allowed ${
-                  paymentMethod === 'venue'
-                    ? 'border-green-600 bg-green-50 shadow-lg'
-                    : 'border-gray-300 hover:border-green-400 bg-white'
-                }`}
-              >
-                <div className={`w-6 h-6 rounded-full border-2 mr-3 flex items-center justify-center ${
-                  paymentMethod === 'venue' ? 'border-green-600' : 'border-gray-300'
-                }`}>
-                  {paymentMethod === 'venue' && (
-                    <div className="w-3 h-3 rounded-full bg-green-600"></div>
-                  )}
-                </div>
-                <div className="flex-1 text-left">
-                  <div className="font-semibold text-gray-800">Pay at Venue</div>
-                  <div className="text-xs text-gray-500">Pay when you arrive at the court</div>
-                </div>
-                <span className="text-3xl">🏢</span>
-              </button>
+          {/* Payment method */}
+          <div>
+            <p className="text-xs font-medium text-foreground mb-2">Payment Method</p>
+            <div className="space-y-2">
+              {[
+                { value: 'online', label: 'Pay Now', desc: 'UPI, Cards, Net Banking & More' },
+                { value: 'venue', label: 'Pay at Venue', desc: 'Pay when you arrive at the court' },
+              ].map((option) => (
+                <button
+                  key={option.value}
+                  type="button"
+                  onClick={() => setPaymentMethod(option.value)}
+                  disabled={processing}
+                  className={`w-full p-4 rounded-md border transition-colors flex items-center gap-3 text-left disabled:opacity-50 ${
+                    paymentMethod === option.value
+                      ? 'border-primary bg-primary/5'
+                      : 'border-border bg-background hover:border-primary/50'
+                  }`}
+                >
+                  <div className={`w-4 h-4 rounded-sm border-2 flex items-center justify-center flex-shrink-0 ${
+                    paymentMethod === option.value ? 'border-primary' : 'border-border'
+                  }`}>
+                    {paymentMethod === option.value && (
+                      <div className="w-2 h-2 rounded-sm bg-primary" />
+                    )}
+                  </div>
+                  <div>
+                    <p className="text-sm font-medium text-foreground">{option.label}</p>
+                    <p className="text-xs text-muted-foreground">{option.desc}</p>
+                  </div>
+                </button>
+              ))}
             </div>
           </div>
 
+          {/* Online payment info */}
           {paymentMethod === 'online' && (
-            <div className="mb-6 p-4 bg-blue-50 border-2 border-blue-200 rounded-lg animate-[slideDown_0.3s_ease-out]">
-              <div className="flex items-start space-x-2">
-                <span className="text-xl">ℹ️</span>
-                <div className="text-sm text-blue-800">
-                  <p className="font-semibold mb-1">Secure Online Payment</p>
-                  <ul className="text-xs space-y-1 text-blue-700">
-                    <li>• <strong>UPI:</strong> PhonePe, GPay, Paytm, BHIM</li>
-                    <li>• <strong>Cards:</strong> Visa, Mastercard, Amex, RuPay</li>
-                    <li>• <strong>Net Banking:</strong> All major banks</li>
-                    <li>• <strong>Wallets:</strong> Paytm, Mobikwik, etc.</li>
-                    <li>• Instant booking confirmation</li>
-                  </ul>
-                </div>
-              </div>
+            <div className="border border-border rounded-md p-4">
+              <p className="text-xs font-medium text-foreground mb-2">Accepted Methods</p>
+              <ul className="text-xs text-muted-foreground space-y-1">
+                <li>UPI — PhonePe, GPay, Paytm, BHIM</li>
+                <li>Cards — Visa, Mastercard, Amex, RuPay</li>
+                <li>Net Banking — All major banks</li>
+                <li>Wallets — Paytm, Mobikwik, etc.</li>
+              </ul>
             </div>
           )}
 
-          <button
-            type="submit"
+          <Button
+            onClick={handlePayment}
             disabled={processing}
-            className={`w-full py-4 rounded-lg font-bold text-white transition-all text-lg transform ${
-              processing
-                ? 'bg-gray-400 cursor-not-allowed'
-                : 'bg-gradient-to-r from-green-600 to-green-500 hover:from-green-700 hover:to-green-600 shadow-lg hover:shadow-xl hover:scale-105'
-            }`}
+            className="w-full"
           >
             {processing ? (
-              <span className="flex items-center justify-center">
-                <span className="animate-spin mr-2 text-xl">⏳</span>
+              <span className="flex items-center gap-2">
+                <div className="w-3.5 h-3.5 border-2 border-primary-foreground border-t-transparent rounded-full animate-spin" />
                 Processing...
               </span>
+            ) : paymentMethod === 'online' ? (
+              `Pay ₹${totalPrice} →`
             ) : (
-              <span className="flex items-center justify-center">
-                {paymentMethod === 'online' ? (
-                  <>
-                    <span className="mr-2">💳</span>
-                    Pay ₹{totalPrice}
-                    <span className="ml-2">→</span>
-                  </>
-                ) : (
-                  <>
-                    <span className="mr-2">✓</span>
-                    Confirm Booking
-                    <span className="ml-2">→</span>
-                  </>
-                )}
-              </span>
+              'Confirm Booking →'
             )}
-          </button>
-        </form>
+          </Button>
 
-        <div className="bg-gradient-to-r from-green-50 to-emerald-50 p-4 rounded-b-2xl border-t border-green-200">
-          <p className="text-xs text-green-700 text-center flex items-center justify-center">
-            <span className="mr-1">🔒</span>
+          <p className="text-center text-xs text-muted-foreground">
             Secure payment powered by Razorpay
           </p>
         </div>
