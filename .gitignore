@@ -34,3 +34,8 @@ dist-ssr
 .firebase/
 .firebaserc
 firebase-debug.log
+
+# Server
+server/node_modules
+server/.env
+server/package-lock.json

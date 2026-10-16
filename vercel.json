@@ -1,12 +1,8 @@
 {
   "rewrites": [
     {
-      "source": "/api/(.*)",
-      "destination": "/api/$1"
+      "source": "/(.*)",
+      "destination": "/index.html"
     }
-  ],
-  "env": {
-    "RAZORPAY_KEY_ID": "@razorpay-key-id",
-    "RAZORPAY_KEY_SECRET": "@razorpay-key-secret"
-  }
+  ]
 }
